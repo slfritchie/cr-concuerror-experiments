@@ -1,0 +1,10 @@
+{application, conc, [
+    {description, "Concuerror experiments."},
+    {vsn, "0.0.1"},
+    {applications, [kernel, stdlib]},
+    {mod,{conc_app,[]}},
+    {registered, []},
+    {env, [
+    %% Don't use this static env for defaults, or we will fall into config hell.
+    ]}
+]}.
