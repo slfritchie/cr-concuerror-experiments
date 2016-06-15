@@ -17,4 +17,4 @@ clean:
 	$(REBAR) -r clean
 
 test: compile
-	${REBAR} ${EUNIT_OPTS} eunit skip_deps=true
+	${REBAR} ${EUNIT_OPTS} eunit -v skip_deps=true
