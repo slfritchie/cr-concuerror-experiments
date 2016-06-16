@@ -31,7 +31,11 @@ write(Idx, Val, [Log|Rest], Repairing, Done, #layout{epoch=Epoch} = Layout) ->
         ok ->
             write(Idx, Val, Rest, Repairing, [Log|Done], Layout);
         written ->
-            {derp_todo_fixme, Layout};
+            if Done == [] ->
+                    {written, Layout};
+               true ->
+                    {derp_partial_write_wtf, Layout}
+            end;
         {bad_epoch, NewEpoch} when Epoch < NewEpoch ->
             {ok, _NewEpoch, NewLayout} = layout_server:read(?LAYOUT_SERVER),
             write(Idx, Val,

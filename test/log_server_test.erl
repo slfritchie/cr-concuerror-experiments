@@ -98,29 +98,43 @@ client_smoke_test() ->
 
 conc_write1_test() ->
     SUT = a,
-    Layout1 = #layout{epoch=1, upi=[a], repairing=[]},
+    Layout1 = #layout{epoch=1, upi=[a],   repairing=[]}, % TODO repairing=[b]
+    Layout2 = #layout{epoch=2, upi=[a,b], repairing=[]},
     {ok, Pid_a} = ?M:start_link(SUT, 1, Layout1, []),
-    %% {ok, Pid_layout} = layout_server:start_link(layout_server, 2, Layout2),
+    {ok, Pid_layout} = layout_server:start_link(layout_server, 1, Layout1),
 
     Val_a = <<"A version">>,
     Val_b = <<"Version B">>,
     Parent = self(),
     F = fun(Name, Idx, Val) ->
                 register(Name, self()),
-                {ok, _Layout2} = log_client:write(Idx, Val, Layout1),
-                Parent ! done
+                {Res, _Layout2} = log_client:write(Idx, Val, Layout1),
+                Parent ! {done, self(), Res}
         end,
     try
-        Writes = [{client_1, 1, Val_a}, {client_2, 2, Val_b}, {client_3, 3, Val_b}],
+        Writes = [{client_1, 1, Val_a}, {client_2, 1, Val_b}],
+        W_expected = [ok, written],
         %% Writes = [{client_1, 1, Val_a}, {client_2, 2, Val_b}],
-        Pids = [spawn(fun() ->
-                              F(Name, Idx, Val)
-                      end) || {Name, Idx, Val} <- Writes ],
+        %% W_expected = [ok, ok],
 
-        [receive done -> ok end || _ <- Pids]
+        W_pids = [spawn(fun() ->
+                                F(Name, Idx, Val)
+                        end) || {Name, Idx, Val} <- Writes ],
+        L_pid = spawn(fun() ->
+                              ok = layout_server:write(layout_server,2,Layout2),
+                              Parent ! {done, self(), ok}
+                      end),
+
+        W_results = [receive
+                         {done, Pid, Res} ->
+                             Res
+                     end || Pid <- W_pids],
+        W_expected = lists:sort(W_results),
+        L_result = receive {done, W_pid, Res} -> Res end,
+        L_result = ok
     after
         catch ?M:stop(Pid_a),
-        %% catch layout_server:stop(Pid_layout)
+        catch layout_server:stop(Pid_layout),
         ok
     end,
     ok.
