@@ -8,25 +8,29 @@
 -define(M, layout_server).
 
 smoke_test() ->
-    SUT = a,
-    {ok, _Pid} = ?M:start_link(SUT, 1, foo),
+    SUT = layout_server,
+    {ok, Pid} = ?M:start_link(SUT, 1, foo),
 
-    {ok, 1, foo} = ?M:get_layout(SUT),
-
-    ok = ?M:set_layout(SUT, 2, bar),
-    {ok, 2, bar} = ?M:get_layout(SUT),
-
-    bad_epoch = ?M:set_layout(SUT, 2, bar),
-    bad_epoch = ?M:set_layout(SUT, 2, yo_dawg),
-    bad_epoch = ?M:set_layout(SUT, 1, bar),
-
-    ok = ?M:stop(SUT),
     try
-        ?M:stop(SUT),
-        exit(should_have_failed)
-    catch
-        _:_ ->
-            ok
+        {ok, 1, foo} = ?M:read(SUT),
+
+        ok = ?M:write(SUT, 2, bar),
+        {ok, 2, bar} = ?M:read(SUT),
+
+        bad_epoch = ?M:write(SUT, 2, bar),
+        bad_epoch = ?M:write(SUT, 2, yo_dawg),
+        bad_epoch = ?M:write(SUT, 1, bar),
+
+        ok = ?M:stop(SUT),
+        try
+            ?M:stop(SUT),
+            exit(should_have_failed)
+        catch
+            _:_ ->
+                ok
+        end
+    after
+        catch ?M:stop(Pid)
     end,
 
     ok.
