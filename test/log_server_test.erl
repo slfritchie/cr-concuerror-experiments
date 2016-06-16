@@ -39,6 +39,16 @@ smoke_test() ->
     {bad_epoch, 5} = ?M:set_layout(SUT, 5, #layout{epoch=5}),
     {ok, Val1} = ?M:read(SUT, 5, 1),
 
+    %% Test the repair override flag
+    Val10a = <<"first val">>,
+    Val10b = <<"second val">>,
+    ok           = ?M:write(SUT, 5, 10, Val10a),
+    written      = ?M:write(SUT, 5, 10, Val10a),
+    {ok, Val10a} = ?M:read( SUT, 5, 10),
+    ok           = ?M:write(SUT, 5, 10, Val10b, magic_repair_abracadabra),
+    {ok, Val10b} = ?M:read( SUT, 5, 10),
+    error        = ?M:write(SUT, 5, 10, Val10b, any_other_atom),
+
     ok = ?M:stop(SUT),
     try
         ?M:stop(SUT),

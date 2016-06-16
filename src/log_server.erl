@@ -8,6 +8,7 @@
          get_layout/1,                          % unit test/debugging only
          stop/1,
          write/4,
+         write/5,                               % repair API only, obscurity!
          read/3
         ]).
 
@@ -41,7 +42,12 @@ stop(Name) ->
     gen_server:call(Name, stop, infinity).
 
 write(Name, Epoch, Idx, Val) ->
-    gen_server:call(Name, {write, Epoch, Idx, Val}, infinity).
+    gen_server:call(Name, {write, Epoch, Idx, Val, false}, infinity).
+
+write(Name, Epoch, Idx, Val, magic_repair_abracadabra) ->
+    gen_server:call(Name, {write, Epoch, Idx, Val, true}, infinity);
+write(_Name, _Epoch, _Idx, _Val, _) ->
+    error.
 
 read(Name, Epoch, Idx) ->
     gen_server:call(Name, {read, Epoch, Idx}, infinity).
@@ -70,19 +76,19 @@ handle_call({set_layout, NewEpoch, NewLayout}, _From,
 handle_call(stop, _From, S) ->
     {stop, normal, ok, S};
 
-handle_call({write, Epoch, _Idx, _Val}, _From, #state{epoch=MyEpoch} = S)
+handle_call({write, Epoch, _Idx, _Val, _Rep}, _From, #state{epoch=MyEpoch} = S)
   when Epoch < MyEpoch ->
     {reply, {bad_epoch, MyEpoch}, S};
 
-handle_call({write, Epoch, _Idx, _Val}, _From, #state{epoch=MyEpoch,
-                                                      layout=Layout} = S)
+handle_call({write, Epoch, _Idx, _Val, _Rep}, _From, #state{epoch=MyEpoch,
+                                                            layout=Layout} = S)
   when Epoch > MyEpoch orelse Layout == undefined ->
     {reply, wedged, S#state{layout=undefined}};
-handle_call({write, _Epoch, Idx, Val}, _From, #state{store=D} = S) ->
-    case orddict:is_key(Idx, D) of
-        true ->
+handle_call({write, _Epoch, Idx, Val, Repair_p}, _From, #state{store=D} = S) ->
+    case {orddict:is_key(Idx, D), Repair_p} of
+        {true, false} ->
             {reply, written, S};
-        false ->
+        _ ->
             {reply, ok, S#state{store=orddict:store(Idx, Val, D)}}
     end;
 
