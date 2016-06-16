@@ -66,7 +66,6 @@ log_smoke_test() ->
 
 client_smoke_test() ->
     SUT = a,
-    Layout0 = #layout{epoch=0, upi=[],  repairing=[]},
     Layout1 = #layout{epoch=1, upi=[a], repairing=[]},
     Layout2 = #layout{epoch=2, upi=[a], repairing=[]},
     Val1 = <<"First!">>,
@@ -75,11 +74,16 @@ client_smoke_test() ->
 
     try
         OOS = chain_out_of_service,
-        {error, OOS }          = log_client:read(1, Layout0),
         {ok, Val1, LayoutB}    = log_client:read(1, Layout1),
 
         {ok, Val1, LayoutC}    = log_client:read(1, LayoutB),
-        {not_written, LayoutD} = log_client:read(7, LayoutC)
+        {not_written, LayoutD} = log_client:read(7, LayoutC),
+
+        Val2 = <<"My second page">>,
+        {ok, LayoutE}       = log_client:write(2, Val2, LayoutD),
+        {ok, Val2, LayoutF} = log_client:read( 2, LayoutE),
+
+        happy
     after
         catch ?M:stop(Pid_a),
         catch layout_server:stop(Pid_layout)
