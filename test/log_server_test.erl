@@ -94,13 +94,13 @@ client_smoke_test() ->
     ok.
 
 %% /usr/local/src/Concuerror/concuerror --pz ./.eunit -m log_server_test -t conc_write1_test
-%% 108 interleavings, no errors
 
 conc_write1_test() ->
-    SUT = a,
     Layout1 = #layout{epoch=1, upi=[a],   repairing=[]}, % TODO repairing=[b]
     Layout2 = #layout{epoch=2, upi=[a,b], repairing=[]},
-    {ok, Pid_a} = ?M:start_link(SUT, 1, Layout1, []),
+    {ok, Pid_a} = ?M:start_link(a, 1, Layout1, []),
+    {ok, Pid_b} = ?M:start_link(b, 1, Layout1, []),
+    Logs = [a, b],
     {ok, Pid_layout} = layout_server:start_link(layout_server, 1, Layout1),
 
     Val_a = <<"A version">>,
@@ -122,6 +122,8 @@ conc_write1_test() ->
                         end) || {Name, Idx, Val} <- Writes ],
         L_pid = spawn(fun() ->
                               ok = layout_server:write(layout_server,2,Layout2),
+                              [ok = ?M:set_layout(Log, 2, Layout2) ||
+                                  Log <- Logs],
                               Parent ! {done, self(), ok}
                       end),
 
@@ -129,11 +131,26 @@ conc_write1_test() ->
                          {done, Pid, Res} ->
                              Res
                      end || Pid <- W_pids],
-        W_expected = lists:sort(W_results),
         L_result = receive {done, W_pid, Res} -> Res end,
-        L_result = ok
+
+        %% Sanity checking
+        W_expected = lists:sort(W_results),
+        L_result = ok,
+        Idxs = lists:usort([Idx || {_Log, Idx, _Val} <- Writes]),
+        R_res = [{Log, Idx, log_server:read(Log, 2, Idx)} ||
+                    Idx <- Idxs, Log <- Logs],
+        true = case lists:sort(R_res) of
+                   [{a,1,{ok,V}}, {b,1,not_written}] ->
+                       true;
+                   [{a,1,{ok,V}}, {b,1,{ok,V}}] ->
+                       true;
+                   Else ->
+                       Else
+               end,
+        ok
     after
         catch ?M:stop(Pid_a),
+        catch ?M:stop(Pid_b),
         catch layout_server:stop(Pid_layout),
         ok
     end,
