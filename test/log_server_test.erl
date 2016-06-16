@@ -8,6 +8,9 @@
 
 -define(M, log_server).
 
+foo_test() ->
+    foo.
+
 log_smoke_test() ->
     SUT = a,
     Layout1 = #layout{epoch=1, upi=[a], repairing=[]},
@@ -87,6 +90,38 @@ client_smoke_test() ->
     after
         catch ?M:stop(Pid_a),
         catch layout_server:stop(Pid_layout)
+    end,
+    ok.
+
+%% /usr/local/src/Concuerror/concuerror --pz ./.eunit -m log_server_test -t conc_write1_test
+%% 108 interleavings, no errors
+
+conc_write1_test() ->
+    SUT = a,
+    Layout1 = #layout{epoch=1, upi=[a], repairing=[]},
+    {ok, Pid_a} = ?M:start_link(SUT, 1, Layout1, []),
+    %% {ok, Pid_layout} = layout_server:start_link(layout_server, 2, Layout2),
+
+    Val_a = <<"A version">>,
+    Val_b = <<"Version B">>,
+    Parent = self(),
+    F = fun(Name, Idx, Val) ->
+                register(Name, self()),
+                {ok, _Layout2} = log_client:write(Idx, Val, Layout1),
+                Parent ! done
+        end,
+    try
+        Writes = [{client_1, 1, Val_a}, {client_2, 2, Val_b}, {client_3, 3, Val_b}],
+        %% Writes = [{client_1, 1, Val_a}, {client_2, 2, Val_b}],
+        Pids = [spawn(fun() ->
+                              F(Name, Idx, Val)
+                      end) || {Name, Idx, Val} <- Writes ],
+
+        [receive done -> ok end || _ <- Pids]
+    after
+        catch ?M:stop(Pid_a),
+        %% catch layout_server:stop(Pid_layout)
+        ok
     end,
     ok.
     

@@ -1,5 +1,6 @@
 .rebar
 .eunit
+concuerror_report.txt
 
 ebin/*.beam
 ebin/*.app
