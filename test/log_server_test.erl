@@ -76,15 +76,14 @@ client_smoke_test() ->
     {ok, Pid_layout} = layout_server:start_link(layout_server, 2, Layout2),
 
     try
-        OOS = chain_out_of_service,
         {ok, Val1, LayoutB}    = log_client:read(1, Layout1),
 
         {ok, Val1, LayoutC}    = log_client:read(1, LayoutB),
         {not_written, LayoutD} = log_client:read(7, LayoutC),
 
         Val2 = <<"My second page">>,
-        {ok, LayoutE}       = log_client:write(2, Val2, LayoutD),
-        {ok, Val2, LayoutF} = log_client:read( 2, LayoutE),
+        {ok, LayoutE}        = log_client:write(2, Val2, LayoutD),
+        {ok, Val2, _LayoutF} = log_client:read( 2, LayoutE),
 
         happy
     after
@@ -113,9 +112,6 @@ conc_write1_test() ->
         end,
     try
         Writes = [{client_1, 1, Val_a}, {client_2, 1, Val_b}],
-        W_expected = [ok, written],
-        %% Writes = [{client_1, 1, Val_a}, {client_2, 2, Val_b}],
-        %% W_expected = [ok, ok],
 
         W_pids = [spawn(fun() ->
                                 F(Name, Idx, Val)
@@ -131,22 +127,29 @@ conc_write1_test() ->
                          {done, Pid, Res} ->
                              Res
                      end || Pid <- W_pids],
-        L_result = receive {done, W_pid, Res} -> Res end,
+        L_result = receive {done, L_pid, Res} -> Res end,
 
         %% Sanity checking
-        W_expected = lists:sort(W_results),
-        L_result = ok,
+        W_expected = [ok, written, starved],    % any # of these is ok
+        [] = lists:usort(W_results) -- W_expected, % nothing unexpected
+        ok = L_result,
+
+        %% The system under test is stable.  If we do a read-repair of
+        %% all indexes, and then we issue a blanket read to all log
+        %% servers at all indexes.  For each index, the result of
+        %% {ok,V} or not_written must all be equal.
+        %%
         Idxs = lists:usort([Idx || {_Log, Idx, _Val} <- Writes]),
-        R_res = [{Log, Idx, log_server:read(Log, 2, Idx)} ||
-                    Idx <- Idxs, Log <- Logs],
-        true = case lists:sort(R_res) of
-                   [{a,1,{ok,V}}, {b,1,not_written}] ->
-                       true;
-                   [{a,1,{ok,V}}, {b,1,{ok,V}}] ->
-                       true;
-                   Else ->
-                       Else
-               end,
+        [{ok, _LO} = log_client:read_repair(Idx, Layout2) || Idx <- Idxs],
+
+        [begin
+             R_res = [log_server:read(Log, 2, Idx) || Log <- Logs],
+             case lists:usort(R_res) of
+                 [not_written] ->          ok;
+                 [{ok, _Unanimous_val}] -> ok
+             end
+         end || Idx <- Idxs],
+
         ok
     after
         catch ?M:stop(Pid_a),
