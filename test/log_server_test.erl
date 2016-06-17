@@ -206,14 +206,14 @@ conc_write_repair1_test() ->
                       end),
 
         W_result = receive
-                       {done, W_Pid, Res} ->
-                           Res
+                       {done, W_pid, Res_x} ->
+                           Res_x
                    end,
         R_result = receive
-                       {done, R_Pid, Res} ->
-                           Res
+                       {done, R_pid, Res_y} ->
+                           Res_y
                    end,
-        L_result = receive {done, L_pid, Res} -> Res end,
+        L_result = receive {done, L_pid, Res_z} -> Res_z end,
 
         %% Sanity checking
         W_expected = [ok, written, starved],    % any # of these is ok

@@ -4,7 +4,7 @@
 -include("layout.hrl").
 
 -define(LAYOUT_SERVER, layout_server). % Naming convention clarity.
--define(MAX_LAYOUTS, 1).               % Max # of layout churn loops
+-define(MAX_LAYOUTS, 2).               % Max # of layout churn loops
 
 read(_Idx, #layout{upi=[]}) ->
     {error, chain_out_of_service, fixme};
