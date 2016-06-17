@@ -11,7 +11,7 @@ read(_Idx, #layout{upi=[]}) ->
 read(Idx, #layout{epoch=Epoch, upi=UPI} = Layout) ->
     case log_server:read(lists:last(UPI), Epoch, Idx) of
         {ok, Val} ->
-            {ok, Val, Layout};
+            {{ok, Val}, Layout};
         not_written ->
             {not_written, Layout};
         {bad_epoch, NewEpoch} when Epoch < NewEpoch ->
@@ -37,7 +37,17 @@ write(_Idx, _Val, _L, _R, _Done, 0 = _MaxLayouts, _Repair_p, Layout) ->
     {starved, Layout};
 write(Idx, Val, [Log|Rest], Repairing, Done, MaxLayouts, Repair_p,
       #layout{epoch=Epoch} = Layout) ->
-    case log_server:write(Log, Epoch, Idx, Val) of
+    %% TODO: Change API for magic write to avoid verbosity here.
+    W = if Repair_p ->
+                fun() ->
+                        log_server:write(Log, Epoch, Idx, Val, magic_repair_abracadabra)
+                end;
+           true ->
+                fun() ->
+                        log_server:write(Log, Epoch, Idx, Val)
+                end
+        end,
+    case W() of
         ok ->
             %% We unconditionally change the value of Repair_p for all
             %% subsequent writes: if we are doing read repair, then we

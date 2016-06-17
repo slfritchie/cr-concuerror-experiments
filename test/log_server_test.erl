@@ -76,14 +76,14 @@ client_smoke_test() ->
     {ok, Pid_layout} = layout_server:start_link(layout_server, 2, Layout2),
 
     try
-        {ok, Val1, LayoutB}    = log_client:read(1, Layout1),
+        {{ok, Val1}, LayoutB}  = log_client:read(1, Layout1),
 
-        {ok, Val1, LayoutC}    = log_client:read(1, LayoutB),
+        {{ok, Val1}, LayoutC}  = log_client:read(1, LayoutB),
         {not_written, LayoutD} = log_client:read(7, LayoutC),
 
         Val2 = <<"My second page">>,
-        {ok, LayoutE}        = log_client:write(2, Val2, LayoutD),
-        {ok, Val2, _LayoutF} = log_client:read( 2, LayoutE),
+        {ok, LayoutE}          = log_client:write(2, Val2, LayoutD),
+        {{ok, Val2}, _LayoutF} = log_client:read( 2, LayoutE),
 
         happy
     after
@@ -149,6 +149,94 @@ conc_write1_test() ->
                  [{ok, _Unanimous_val}] -> ok
              end
          end || Idx <- Idxs],
+
+        ok
+    after
+        catch ?M:stop(Pid_a),
+        catch ?M:stop(Pid_b),
+        catch layout_server:stop(Pid_layout),
+        ok
+    end,
+    ok.
+
+%% OK, let's set this up using the scenario that I'd put on the
+%% whiteboard earlier this week.  Chain starts at length 2:
+%%
+%%    Head a = Val_a, Tail b = unwritten
+%%
+%% Next chain config:
+%%
+%%     Head a, Tail b, Tail-of-tails c (repairing)
+%%
+%% Final chain config:
+%%
+%%     Head a, Middle b, Tail c 
+
+conc_write_repair1_test() ->
+    Val_a = <<"A version">>,
+    Val_b = <<"Version B">>,
+    Layout1 = #layout{epoch=1, upi=[a,b],   repairing=[]},
+    Layout2 = #layout{epoch=2, upi=[a,b],   repairing=[c]},
+    Layout3 = #layout{epoch=3, upi=[a,b,c], repairing=[]},
+    {ok, Pid_a} = ?M:start_link(a, 1, Layout1, [{1,Val_a}]),
+    {ok, Pid_b} = ?M:start_link(b, 1, Layout1, [{1,Val_a}]),
+    {ok, Pid_c} = ?M:start_link(c, 1, Layout1, []),
+    Logs = [a, b, c],
+    {ok, Pid_layout} = layout_server:start_link(layout_server, 1, Layout1),
+
+    Parent = self(),
+    try
+        W_pid = spawn(fun() ->
+                              {Res, _} = log_client:write(1, Val_b, Layout1),
+                              Parent ! {done, self(), Res}
+                        end),
+        R_pid = spawn(fun() ->
+                              {Res1, _} = log_client:read(1, Layout1),
+                              {Res2, _} = log_client:read(1, Layout1),
+                              Parent ! {done, self(), {Res1,Res2}}
+                        end),
+        L_pid = spawn(fun() ->
+                              ok = layout_server:write(layout_server,2,Layout2),
+                              [ok = ?M:set_layout(Log, 2, Layout2) ||
+                                  Log <- Logs],
+                              ok = layout_server:write(layout_server,3,Layout3),
+                              [ok = ?M:set_layout(Log, 3, Layout3) ||
+                                  Log <- Logs],
+                              Parent ! {done, self(), ok}
+                      end),
+
+        W_result = receive
+                       {done, W_Pid, Res} ->
+                           Res
+                   end,
+        R_result = receive
+                       {done, R_Pid, Res} ->
+                           Res
+                   end,
+        L_result = receive {done, L_pid, Res} -> Res end,
+
+        %% Sanity checking
+        W_expected = [ok, written, starved],    % any # of these is ok
+        true = lists:member(W_result, W_expected),
+        ok = L_result,
+
+        io:format(user, "R_result = ~p\n", [R_result]),
+
+        %% %% The system under test is stable.  If we do a read-repair of
+        %% %% all indexes, and then we issue a blanket read to all log
+        %% %% servers at all indexes.  For each index, the result of
+        %% %% {ok,V} or not_written must all be equal.
+        %% %%
+        %% Idxs = lists:usort([Idx || {_Log, Idx, _Val} <- Writes]),
+        %% [{ok, _LO} = log_client:read_repair(Idx, Layout2) || Idx <- Idxs],
+
+        %% [begin
+        %%      R_res = [log_server:read(Log, 2, Idx) || Log <- Logs],
+        %%      case lists:usort(R_res) of
+        %%          [not_written] ->          ok;
+        %%          [{ok, _Unanimous_val}] -> ok
+        %%      end
+        %%  end || Idx <- Idxs],
 
         ok
     after

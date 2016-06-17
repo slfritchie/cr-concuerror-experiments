@@ -35,7 +35,7 @@ get_layout(Name) ->
 
 set_layout(Name, Epoch, Layout)
   when is_integer(Epoch), Epoch >= 0,
-       is_record(Layout, layout) ->
+       is_record(Layout, layout), Epoch == Layout#layout.epoch->
     gen_server:call(Name, {set_layout, Epoch, Layout}, infinity).
 
 stop(Name) ->
@@ -66,8 +66,7 @@ handle_call(get_layout, _From,
 
 handle_call({set_layout, NewEpoch, NewLayout}, _From,
             #state{epoch=Epoch} = S) ->
-    if is_integer(NewEpoch), NewEpoch > Epoch,
-       NewEpoch == NewLayout#layout.epoch ->
+    if NewEpoch > Epoch ->
             {reply, ok, S#state{epoch=NewEpoch, layout=NewLayout}};
        true ->
             {reply, {bad_epoch, Epoch}, S}
