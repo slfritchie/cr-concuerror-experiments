@@ -34,10 +34,10 @@ read(Idx, MaxLayouts, #layout{epoch=Epoch, upi=UPI} = Layout) ->
 write(_Idx, _Val, #layout{upi=[]}) ->
     {error, chain_out_of_service, fixme};
 write(Idx, Val, #layout{upi=UPI, repairing=Repairing} = Layout) ->
-    write(Idx, Val, UPI, Repairing, [], ?MAX_LAYOUTS, false, Layout).
+    WriteLogs = UPI ++ Repairing,
+    write(Idx, Val, WriteLogs, ['unused!'], [], ?MAX_LAYOUTS, false, Layout).
 
-%% TODO: we assume Repairing list is always [].  FIXME.
-write(_Idx, _Val, [], [], _Done, _MaxLayouts, _Repair_p, Layout) ->
+write(_Idx, _Val, [], _Repairing, _Done, _MaxLayouts, _Repair_p, Layout) ->
     {ok, Layout};
 write(_Idx, _Val, _L, _R, _Done, 0 = _MaxLayouts, _Repair_p, Layout) ->
     %% An infinite loop really irritates Concuerror.  Break out, check
@@ -65,20 +65,26 @@ write(Idx, Val, [Log|Rest], Repairing, Done, MaxLayouts, Repair_p,
             write(Idx, Val, Rest, Repairing, [Log|Done],
                   MaxLayouts, false, Layout);
         written ->
-            if Repair_p ->
+            if Done == [] ->
+                    {written, Layout};
+               true ->
                     case log_server:read(Log, Epoch, Idx) of
                         {ok, WrittenVal} when WrittenVal == Val ->
                             write(Idx, Val, Rest, Repairing, [Log|Done],
                                   MaxLayouts, Repair_p, Layout);
+                        {ok, _Else} ->
+                            if Done == [] ->
+                                    {written, Layout};
+                               true ->
+                                    {todo_fixme, Layout}
+                            end;
                         wedged ->
-                            new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p);
+                            new_layout_retry_write(Idx, Val, Done,
+                                                   MaxLayouts, Repair_p);
                         {bad_epoch, NewEpoch} when Epoch < NewEpoch ->
-                            new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p)
-                    end;
-               Done == [] ->
-                    {written, Layout};
-               true ->
-                    {derp_partial_write_wtf, Layout}
+                            new_layout_retry_write(Idx, Val, Done,
+                                                   MaxLayouts, Repair_p)
+                    end
             end;
         wedged ->
             new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p);
@@ -88,9 +94,8 @@ write(Idx, Val, [Log|Rest], Repairing, Done, MaxLayouts, Repair_p,
 
 new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p) ->
     {ok, _NewEpoch, NewLayout} = layout_server:read(?LAYOUT_SERVER),
-    write(Idx, Val,
-          NewLayout#layout.upi -- Done,
-          NewLayout#layout.repairing -- Done,
+    WriteLogs = NewLayout#layout.upi ++ NewLayout#layout.repairing,
+    write(Idx, Val, WriteLogs, ['unused!'],
           Done, MaxLayouts - 1, Repair_p, NewLayout).
 
 read_repair(Idx, #layout{epoch=Epoch,
