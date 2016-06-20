@@ -6,17 +6,25 @@
 -define(LAYOUT_SERVER, layout_server). % Naming convention clarity.
 -define(MAX_LAYOUTS, 2).               % Max # of layout churn loops
 
-read(_Idx, #layout{upi=[]}) ->
+read(Idx, Layout) ->
+    read(Idx, ?MAX_LAYOUTS, Layout).
+
+read(_Idx, 0, Layout) ->
+    {starved, Layout};
+read(_Idx, _MaxLayouts, #layout{upi=[]}) ->
     {error, chain_out_of_service, fixme};
-read(Idx, #layout{epoch=Epoch, upi=UPI} = Layout) ->
+read(Idx, MaxLayouts, #layout{epoch=Epoch, upi=UPI} = Layout) ->
     case log_server:read(lists:last(UPI), Epoch, Idx) of
         {ok, Val} ->
             {{ok, Val}, Layout};
         not_written ->
             {not_written, Layout};
+        wedged ->
+            {ok, _NewEpoch, NewLayout} = layout_server:read(?LAYOUT_SERVER),
+            read(Idx, MaxLayouts - 1, NewLayout);
         {bad_epoch, NewEpoch} when Epoch < NewEpoch ->
             {ok, _NewEpoch, NewLayout} = layout_server:read(?LAYOUT_SERVER),
-            read(Idx, NewLayout)
+            read(Idx, MaxLayouts - 1, NewLayout)
     end.
 
 %% write_ignore_written(Idx, Val, Done,

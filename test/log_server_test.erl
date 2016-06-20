@@ -171,6 +171,14 @@ conc_write1_test() ->
 %% Final chain config:
 %%
 %%     Head a, Middle b, Tail c 
+%%
+%% This config isn't quite what I want to test, but it's getting closer.
+%% FWIW, summaries for --scheduling_bound N:
+%%
+%% N=3: 572/572 interleavings explored (the scheduling bound was reached)
+%% N=4: 2399/2399 interleavings explored (the scheduling bound was reached)
+%% N=5: 8187/8187 interleavings explored (the scheduling bound was reached)
+%% N=unbounded : at least 60,000 interleavings, not done yet!
 
 conc_write_repair1_test() ->
     Val_a = <<"A version">>,
@@ -199,6 +207,11 @@ conc_write_repair1_test() ->
                               ok = layout_server:write(layout_server,2,Layout2),
                               [ok = ?M:set_layout(Log, 2, Layout2) ||
                                   Log <- Logs],
+
+                              %% HACK: hard-code read-repair for this case
+                              {ok, V_repair} = ?M:read(b, 2, 1),
+                              ok = ?M:write(c, 2, 1, V_repair),
+
                               ok = layout_server:write(layout_server,3,Layout3),
                               [ok = ?M:set_layout(Log, 3, Layout3) ||
                                   Log <- Logs],
@@ -220,7 +233,13 @@ conc_write_repair1_test() ->
         true = lists:member(W_result, W_expected),
         ok = L_result,
 
-        io:format(user, "R_result = ~p\n", [R_result]),
+        case R_result of
+            {{ok,Val_a},{ok,Val_a}} -> ok;
+            {starved,   {ok,Val_a}} -> ok;
+            {{ok,Val_a},starved}    -> ok;
+            {starved,   starved}    -> ok
+        end,
+        %% io:format(user, "R_result = ~p\n", [R_result]),
 
         %% %% The system under test is stable.  If we do a read-repair of
         %% %% all indexes, and then we issue a blanket read to all log
@@ -240,8 +259,7 @@ conc_write_repair1_test() ->
 
         ok
     after
-        catch ?M:stop(Pid_a),
-        catch ?M:stop(Pid_b),
+        [catch ?M:stop(P) || P <- Logs],
         catch layout_server:stop(Pid_layout),
         ok
     end,
