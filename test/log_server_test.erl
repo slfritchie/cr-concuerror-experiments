@@ -172,13 +172,14 @@ conc_write1_test() ->
 %%
 %%     Head a, Middle b, Tail c 
 %%
-%% This config isn't quite what I want to test, but it's getting closer.
-%% FWIW, summaries for --scheduling_bound N:
-%%
-%% N=3: 572/572 interleavings explored (the scheduling bound was reached)
-%% N=4: 2399/2399 interleavings explored (the scheduling bound was reached)
-%% N=5: 8187/8187 interleavings explored (the scheduling bound was reached)
-%% N=unbounded : at least 60,000 interleavings, not done yet!
+%% OK, I think this is doing Machi-style replication & repair, and
+%% using "--scheduling_bound 4 --depth_bound 350" found a problem at about
+%% 3398 interleavings:
+%% * At step 256 process P exited abnormally
+%%    Reason:
+%%      {{case_clause,{{ok,<<"A version">>},not_written}},
+%%       [{log_server_test,conc_write_repair1_test,0,
+%%                         [{file,"test/log_server_test.erl"},{line,262}]}]}
 
 conc_write_repair1_test() ->
     Val_a = <<"A version">>,
