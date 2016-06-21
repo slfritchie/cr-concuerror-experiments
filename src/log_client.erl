@@ -4,7 +4,9 @@
 -include("layout.hrl").
 
 -define(LAYOUT_SERVER, layout_server). % Naming convention clarity.
--define(MAX_LAYOUTS, 2).               % Max # of layout churn loops
+-define(MAX_LAYOUTS, 4).               % Max # of layout churn loops
+
+-define(LOG(X), put(foo, [{X,?LINE}|get(foo)])).
 
 read(Idx, Layout) ->
     read(Idx, ?MAX_LAYOUTS, Layout).
@@ -34,27 +36,39 @@ read(Idx, MaxLayouts, #layout{epoch=Epoch, upi=UPI} = Layout) ->
 write(_Idx, _Val, #layout{upi=[]}) ->
     {error, chain_out_of_service, fixme};
 write(Idx, Val, #layout{upi=UPI, repairing=Repairing} = Layout) ->
-    WriteLogs = UPI ++ Repairing,
-    write(Idx, Val, WriteLogs, ['unused!'], [], ?MAX_LAYOUTS, false, Layout).
+    put(foo, []),
+    WriteLogs = Repairing ++ UPI,
+    ?LOG(Layout),
+    write(Idx, Val, WriteLogs, Repairing, [], [], ?MAX_LAYOUTS, false, Layout).
 
-write(_Idx, _Val, [], _Repairing, _Done, _MaxLayouts, _Repair_p, Layout) ->
+write(_Idx, _Val, [], _Repairing, _Done, _DoneRepairing,
+      _MaxLayouts, _Repair_p, Layout) ->
+    ?LOG(done),
     {ok, Layout};
-write(_Idx, _Val, _L, _R, _Done, 0 = _MaxLayouts, _Repair_p, Layout) ->
+write(_Idx, _Val, _L, _R, _Done, _DoneRepairing,
+      0 = _MaxLayouts, _Repair_p, Layout) ->
     %% An infinite loop really irritates Concuerror.  Break out, check
     %% for sanity in some other way.
+    ?LOG(starved),
     {starved, Layout};
-write(Idx, Val, [Log|Rest], Repairing, Done, MaxLayouts, Repair_p,
-      #layout{epoch=Epoch} = Layout) ->
+write(Idx, Val, [Log|Rest], Repairing, Done, DoneRepairing,
+      MaxLayouts, Repair_p, #layout{epoch=Epoch} = Layout) ->
     %% TODO: Change API for magic write to avoid verbosity here.
     W = if Repair_p ->
                 fun() ->
+                        ?LOG({write_repair,Layout,Val}),
                         log_server:write(Log, Epoch, Idx, Val, magic_repair_abracadabra)
                 end;
            true ->
                 fun() ->
+                        ?LOG({write,Log,Layout,Val}),
                         log_server:write(Log, Epoch, Idx, Val)
                 end
         end,
+    DoneRepairing2 = case lists:member(Log, Repairing) of
+                         true  -> [Log|DoneRepairing];
+                         false -> DoneRepairing
+                     end,
     case W() of
         ok ->
             %% We unconditionally change the value of Repair_p for all
@@ -62,41 +76,71 @@ write(Idx, Val, [Log|Rest], Repairing, Done, MaxLayouts, Repair_p,
             %% have just encountered our first unwritten value.  To to
             %% help expose bugs, we want any write further down the chain
             %% for this read-repair to fail if 'written' is found.
-            write(Idx, Val, Rest, Repairing, [Log|Done],
+            ?LOG(ok),
+            write(Idx, Val, Rest, Repairing, [Log|Done], DoneRepairing2,
                   MaxLayouts, false, Layout);
         written ->
             if Done == [] ->
+                    ?LOG(written),
                     {written, Layout};
                true ->
                     case log_server:read(Log, Epoch, Idx) of
                         {ok, WrittenVal} when WrittenVal == Val ->
+                            ?LOG(same),
                             write(Idx, Val, Rest, Repairing, [Log|Done],
+                                  DoneRepairing2,
                                   MaxLayouts, Repair_p, Layout);
                         {ok, _Else} ->
+                            ?LOG({else, _Else}),
+                            AllDoneWereRepairs_p =
+                                ordsets:is_subset(
+                                  ordsets:from_list(Done),
+                                  ordsets:from_list(DoneRepairing)),
+                            CurrentIsRepairing_p = lists:member(Log, Repairing),
                             if Done == [] ->
                                     {written, Layout};
+                               AllDoneWereRepairs_p ->
+                                    %% This is the case where the head-of-heads
+                                    %% (node under repair) has been written
+                                    %% successfully a race in prior layout had
+                                    %% written to the head successfully.
+                                    %% We tell this writer that it loses.
+                                    {written, Layout};
+                               CurrentIsRepairing_p ->
+                                    %% Current log unit is under repair.
+                                    %% Our write failed because of a partial
+                                    %% write is present at this unit.  The
+                                    %% repair process fill fix the partial
+                                    %% write, so we can safely continue on
+                                    %% with the rest of the chain.
+                                    write(Idx, Val, Rest, Repairing,
+                                          Done, DoneRepairing,
+                                          MaxLayouts, Repair_p, Layout);
                                true ->
-                                    {todo_fixme, Layout}
+                                    {{todo_fixme2, log, Log, done, Done, done_repairing, DoneRepairing, epoch, Layout#layout.epoch, upi, Layout#layout.upi, repairing, Layout#layout.repairing, val, Val, max_l, MaxLayouts, rep, Repair_p, {log_a, catch log_server:read(a, Epoch, Idx)}, {log_b, catch log_server:read(b, Epoch, Idx)}, {log_c, catch log_server:read(c, Epoch, Idx), lists:reverse(get(foo))}}, Layout}
                             end;
                         wedged ->
-                            new_layout_retry_write(Idx, Val, Done,
+                            new_layout_retry_write(Idx, Val, Done, DoneRepairing,
                                                    MaxLayouts, Repair_p);
                         {bad_epoch, NewEpoch} when Epoch < NewEpoch ->
-                            new_layout_retry_write(Idx, Val, Done,
+                            new_layout_retry_write(Idx, Val, Done, DoneRepairing,
                                                    MaxLayouts, Repair_p)
                     end
             end;
         wedged ->
-            new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p);
+            new_layout_retry_write(Idx, Val, Done, DoneRepairing,
+                                   MaxLayouts, Repair_p);
         {bad_epoch, NewEpoch} when Epoch < NewEpoch ->
-            new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p)
+            new_layout_retry_write(Idx, Val, Done, DoneRepairing,
+                                    MaxLayouts, Repair_p)
     end.
 
-new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p) ->
+new_layout_retry_write(Idx, Val, Done, DoneRepairing, MaxLayouts, Repair_p) ->
     {ok, _NewEpoch, NewLayout} = layout_server:read(?LAYOUT_SERVER),
-    WriteLogs = NewLayout#layout.upi ++ NewLayout#layout.repairing,
-    write(Idx, Val, WriteLogs, ['unused!'],
-          Done, MaxLayouts - 1, Repair_p, NewLayout).
+    Repairing = NewLayout#layout.repairing,
+    WriteLogs = Repairing ++ NewLayout#layout.upi,
+    write(Idx, Val, WriteLogs, Repairing,
+          Done, DoneRepairing, MaxLayouts - 1, Repair_p, NewLayout).
 
 read_repair(Idx, #layout{epoch=Epoch,
                          upi=[Head|Rest]=UPI, repairing=Repairing} = Layout) ->
@@ -108,7 +152,7 @@ read_repair(Idx, #layout{epoch=Epoch,
                 not_written ->
                     {not_written, Layout};
                 {ok, Val} ->
-                    write(Idx, Val, Rest, Repairing, [Head],
+                    write(Idx, Val, Rest, Repairing, [Head], [],
                           ?MAX_LAYOUTS, true, Layout)
             end
     end.

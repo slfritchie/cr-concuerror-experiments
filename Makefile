@@ -30,3 +30,6 @@ conc_write1_test: compile-test
 conc_write_repair1_test: compile-test
 	$(CONCUERROR) --pz .eunit -m log_server_test -t $@ $(CONC_OPTS)
 
+conc_write_repair2_test: compile-test
+	$(CONCUERROR) --pz .eunit -m log_server_test -t $@ $(CONC_OPTS)
+
