@@ -117,7 +117,8 @@ write(Idx, Val, [Log|Rest], Repairing, Done, DoneRepairing,
                                           Done, DoneRepairing,
                                           MaxLayouts, Repair_p, Layout);
                                true ->
-                                    {{todo_fixme2, log, Log, done, Done, done_repairing, DoneRepairing, epoch, Layout#layout.epoch, upi, Layout#layout.upi, repairing, Layout#layout.repairing, val, Val, max_l, MaxLayouts, rep, Repair_p, {log_a, catch log_server:read(a, Epoch, Idx)}, {log_b, catch log_server:read(b, Epoch, Idx)}, {log_c, catch log_server:read(c, Epoch, Idx), lists:reverse(get(foo))}}, Layout}
+                                    {starved,Layout}  % TODO Experiment! Just return 'starved' for now to see how the rest of the sanity checks react (replace exception commented below)
+                                    %% {{todo_fixme2, log, Log, done, Done, done_repairing, DoneRepairing, epoch, Layout#layout.epoch, upi, Layout#layout.upi, repairing, Layout#layout.repairing, val, Val, max_l, MaxLayouts, rep, Repair_p, {log_a, catch log_server:read(a, Epoch, Idx)}, {log_b, catch log_server:read(b, Epoch, Idx)}, {log_c, catch log_server:read(c, Epoch, Idx), lists:reverse(get(foo))}}, Layout}
                             end;
                         wedged ->
                             new_layout_retry_write(Idx, Val, Done, DoneRepairing,
