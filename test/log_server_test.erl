@@ -70,11 +70,20 @@ split_role_test() ->
     Layout1 = #layout{epoch=1, upi=[a], repairing=[]},
     Layout2 = #layout{epoch=1, upi=[a], repairing=[b]},
     Val1 = <<"First!">>,
-    {ok, PidA} = ?M:start_link(a, 1, Layout1, [{1, Val1}]),
-    {ok, PidB} = ?M:start_link(b, 1, Layout1, [{1, Val1}]),
+    {ok, PidA} = ?M:start_link(a, 1, Layout1, []),
+    {ok, PidB} = ?M:start_link(b, 1, Layout1, []),
 
     try
-        x
+        not_written = ?M:read(a, 1, 1),
+        ok = ?M:write_during_repair(a, 1, 1, Val1),
+        {ok, Val1}  = ?M:read_during_repair(a, 1, 1),
+        not_written = ?M:read(              a, 1, 1),
+
+        written = ?M:write_during_repair(a, 1, 1, Val1),
+        ok      = ?M:write(              a, 1, 1, Val1),
+        written = ?M:write(              a, 1, 1, Val1),
+
+        ok
     after
         [catch ?M:stop(P) || P <- [PidA, PidB]]
     end.

@@ -57,13 +57,13 @@ write_during_repair(Name, Epoch, Idx, Val) ->
 write(Name, Epoch, Idx, Val, Repair_p, HeadRepair_p) ->
     gen_server:call(Name, {write, Epoch, Idx, Val, Repair_p, HeadRepair_p}, infinity).
 
-read(Name, Epoch, Idx) ->
+read(Name, Epoch, Idx) when is_integer(Epoch), is_integer(Idx) ->
     read(Name, Epoch, Idx, false).
 
-read_during_repair(Name, Epoch, Idx) ->
+read_during_repair(Name, Epoch, Idx) when is_integer(Epoch), is_integer(Idx) ->
     read(Name, Epoch, Idx, true).
 
-read(Name, Epoch, Idx, Repair_p) ->
+read(Name, Epoch, Idx, Repair_p)  when is_integer(Epoch), is_integer(Idx) ->
     gen_server:call(Name, {read, Epoch, Idx, Repair_p}, infinity).
 
 %%%%%%%%%%%%%%%%%%%%%%
