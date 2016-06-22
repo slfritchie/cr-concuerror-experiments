@@ -49,9 +49,8 @@ log_smoke_test() ->
         ok           = ?M:write(SUT, 5, 10, Val10a),
         written      = ?M:write(SUT, 5, 10, Val10a),
         {ok, Val10a} = ?M:read( SUT, 5, 10),
-        ok           = ?M:write(SUT, 5, 10, Val10b, magic_repair_abracadabra),
+        ok           = ?M:write_clobber(SUT, 5, 10, Val10b),
         {ok, Val10b} = ?M:read( SUT, 5, 10),
-        error        = ?M:write(SUT, 5, 10, Val10b, any_other_atom),
 
         ok = ?M:stop(SUT),
         try
@@ -220,8 +219,7 @@ conc_write_repair3_2to3_test() ->
                               %% HACK: hard-code read-repair for this case
                               case ?M:read(b, 2, 1) of
                                   {ok, V_repair} ->
-                                      case ?M:write(c, 2, 1, V_repair,
-                                                    magic_repair_abracadabra) of
+                                      case ?M:write_clobber(c, 2, 1, V_repair) of
                                           ok      -> ok;
                                           written -> ok;
                                           starved -> exit(oi_todo_yo1)

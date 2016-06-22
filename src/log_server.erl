@@ -8,7 +8,8 @@
          get_layout/1,                          % unit test/debugging only
          stop/1,
          write/4,
-         write/5,                               % repair API only, obscurity!
+         write_clobber/4,                       % repair API only, obscurity!
+         write_during_repair/4,
          read/3,
          read_during_repair/3
         ]).
@@ -45,12 +46,16 @@ stop(Name) ->
     gen_server:call(Name, stop, infinity).
 
 write(Name, Epoch, Idx, Val) ->
-    gen_server:call(Name, {write, Epoch, Idx, Val, false}, infinity).
+    write(Name, Epoch, Idx, Val, false, false).
 
-write(Name, Epoch, Idx, Val, magic_repair_abracadabra) ->
-    gen_server:call(Name, {write, Epoch, Idx, Val, true}, infinity);
-write(_Name, _Epoch, _Idx, _Val, _) ->
-    error.
+write_clobber(Name, Epoch, Idx, Val) ->
+    write(Name, Epoch, Idx, Val, true, false).
+
+write_during_repair(Name, Epoch, Idx, Val) ->
+    write(Name, Epoch, Idx, Val, false, true).
+
+write(Name, Epoch, Idx, Val, Repair_p, HeadRepair_p) ->
+    gen_server:call(Name, {write, Epoch, Idx, Val, Repair_p, HeadRepair_p}, infinity).
 
 read(Name, Epoch, Idx) ->
     read(Name, Epoch, Idx, false).
@@ -84,15 +89,17 @@ handle_call({set_layout, NewEpoch, NewLayout}, _From,
 handle_call(stop, _From, S) ->
     {stop, normal, ok, S};
 
-handle_call({write, Epoch, _Idx, _Val, _Rep}, _From, #state{epoch=MyEpoch} = S)
+handle_call({write, Epoch, _Idx, _Val, _Rep, _HdRep}, _From,
+            #state{epoch=MyEpoch} = S)
   when Epoch < MyEpoch ->
     {reply, {bad_epoch, MyEpoch}, S};
 
-handle_call({write, Epoch, _Idx, _Val, _Rep}, _From, #state{epoch=MyEpoch,
-                                                            layout=Layout} = S)
+handle_call({write, Epoch, _Idx, _Val, _Rep, _HdRep}, _From,
+            #state{epoch=MyEpoch, layout=Layout} = S)
   when Epoch > MyEpoch orelse Layout == undefined ->
     {reply, wedged, S#state{layout=undefined}};
-handle_call({write, _Epoch, Idx, Val, Repair_p}, _From, #state{store=D} = S) ->
+handle_call({write, _Epoch, Idx, Val, Repair_p, _HeadRepair_p}, _From,
+            #state{store=D} = S) ->
     case {orddict:is_key(Idx, D), Repair_p} of
         {true, false} ->
             {reply, written, S};

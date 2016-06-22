@@ -65,7 +65,7 @@ write(Idx, Val, [{Log, _TODO}|Rest], Done, MaxLayouts, Repair_p,
             true ->
                 fun() ->
                         ?LOG({write_repair,Layout,Val}),
-                        log_server:write(Log, Epoch, Idx, Val, magic_repair_abracadabra)
+                        log_server:write_clobber(Log, Epoch, Idx, Val)
                 end;
            false ->
                 fun() ->
