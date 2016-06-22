@@ -1,6 +1,9 @@
 
 -module(log_client).
--export([read/2, read_repair/2, write/3]).
+-export([read/2,
+         %% %% TODO: broken by chain repair @ length=1
+         %% read_repair/2,
+         write/3]).
 -include("layout.hrl").
 
 -define(LAYOUT_SERVER, layout_server). % Naming convention clarity.
@@ -30,13 +33,14 @@ read(Idx, MaxLayouts, #layout{epoch=Epoch, upi=UPI} = Layout) ->
     end.
 
 make_write_order(#layout{upi=UPI, repairing=[]}) ->
-    UPI;
+    [{L, false} || L <- UPI];
 make_write_order(#layout{upi=[_], repairing=[]}) ->
     exit(todo_future_work);
 make_write_order(#layout{upi=UPI, repairing=Repairing}) ->
     Tail = lists:last(UPI),
     Prefix = UPI -- [Tail],
-    Prefix ++ Repairing ++ [Tail].
+    Ls = Prefix ++ Repairing ++ [Tail],
+    [{L, false} || L <- Ls].
 
 write(_Idx, _Val, #layout{upi=[]}) ->
     {error, chain_out_of_service, fixme};
@@ -54,7 +58,7 @@ write(_Idx, _Val, _L, _Done, 0 = _MaxLayouts, _Repair_p, Layout) ->
     %% for sanity in some other way.
     ?LOG(starved),
     {starved, Layout};
-write(Idx, Val, [Log|Rest], Done, MaxLayouts, Repair_p,
+write(Idx, Val, [{Log, _TODO}|Rest], Done, MaxLayouts, Repair_p,
       #layout{epoch=Epoch, repairing=Repairing} = Layout) ->
     %% TODO: Change API for magic write to avoid verbosity here.
     W = case lists:member(Log, Repairing) of
@@ -108,16 +112,18 @@ new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p) ->
     WriteLogs = make_write_order(NewLayout),
     write(Idx, Val, WriteLogs, Done, MaxLayouts - 1, Repair_p, NewLayout).
 
-read_repair(Idx, #layout{epoch=Epoch,
-                         upi=[Head|Rest]=UPI} = Layout) ->
-    case log_server:read(lists:last(UPI), Epoch, Idx) of
-        {ok, _Val} ->
-            {ok, Layout};
-        not_written ->
-            case log_server:read(Head, Epoch, Idx) of
-                not_written ->
-                    {not_written, Layout};
-                {ok, Val} ->
-                    write(Idx, Val, Rest, [Head], ?MAX_LAYOUTS, true, Layout)
-            end
-    end.
+%% TODO: broken by chain repair @ length=1
+%%
+%% read_repair(Idx, #layout{epoch=Epoch,
+%%                          upi=[Head|Rest]=UPI} = Layout) ->
+%%     case log_server:read(lists:last(UPI), Epoch, Idx) of
+%%         {ok, _Val} ->
+%%             {ok, Layout};
+%%         not_written ->
+%%             case log_server:read(Head, Epoch, Idx) of
+%%                 not_written ->
+%%                     {not_written, Layout};
+%%                 {ok, Val} ->
+%%                     write(Idx, Val, Rest, [Head], ?MAX_LAYOUTS, true, Layout)
+%%             end
+%%     end.

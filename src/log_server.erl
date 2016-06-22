@@ -9,7 +9,8 @@
          stop/1,
          write/4,
          write/5,                               % repair API only, obscurity!
-         read/3
+         read/3,
+         read_during_repair/3
         ]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -18,10 +19,12 @@
 -include("layout.hrl").
 
 -record(state, {
-          name   :: atom(),
-          epoch  :: non_neg_integer(),
-          layout :: 'undefined' | term(),
-          store  :: orddict:orddict()
+          name           :: atom(),
+          epoch          :: non_neg_integer(),
+          layout         :: 'undefined' | term(),
+          am_split=false :: boolean(),
+          store          :: orddict:orddict(),
+          h_store        :: orddict:orddict()
          }).
 
 start_link(Name, InitialEpoch, InitialLayout, InitialStore)
@@ -50,7 +53,13 @@ write(_Name, _Epoch, _Idx, _Val, _) ->
     error.
 
 read(Name, Epoch, Idx) ->
-    gen_server:call(Name, {read, Epoch, Idx}, infinity).
+    read(Name, Epoch, Idx, false).
+
+read_during_repair(Name, Epoch, Idx) ->
+    read(Name, Epoch, Idx, true).
+
+read(Name, Epoch, Idx, Repair_p) ->
+    gen_server:call(Name, {read, Epoch, Idx, Repair_p}, infinity).
 
 %%%%%%%%%%%%%%%%%%%%%%
 
@@ -91,15 +100,15 @@ handle_call({write, _Epoch, Idx, Val, Repair_p}, _From, #state{store=D} = S) ->
             {reply, ok, S#state{store=orddict:store(Idx, Val, D)}}
     end;
 
-handle_call({read, Epoch, _Idx}, _From, #state{epoch=MyEpoch} = S)
+handle_call({read, Epoch, _Idx, _Repair_p}, _From, #state{epoch=MyEpoch} = S)
   when Epoch < MyEpoch ->
     {reply, {bad_epoch, MyEpoch}, S};
 
-handle_call({read, Epoch, _Idx}, _From, #state{epoch=MyEpoch,
-                                               layout=Layout} = S)
+handle_call({read, Epoch, _Idx, _Repair_p}, _From, #state{epoch=MyEpoch,
+                                                          layout=Layout} = S)
   when Epoch > MyEpoch orelse Layout == undefined ->
     {reply, wedged, S#state{layout=undefined}};
-handle_call({read, _Epoch, Idx}, _From, #state{store=D} = S) ->
+handle_call({read, _Epoch, Idx, _Repair_p}, _From, #state{store=D} = S) ->
     case orddict:find(Idx, D) of
         error ->
             {reply, not_written, S};
