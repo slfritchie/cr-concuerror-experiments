@@ -162,19 +162,130 @@ conc_write1_test() ->
 %% OK, let's set this up using the scenario that I'd put on the
 %% whiteboard earlier this week.  Chain starts at length 2:
 %%
-%%    Head a = Val_a, Tail b = unwritten
+%%    Head a = unwritten, Tail b = unwritten
 %%
 %% Next chain config:
 %%
-%%     Head-of-heads c (repairing), Head a, Tail b
+%%     Head a, Middle/repairing c, Tail b
 %%
 %% Final chain config:
 %%
-%%     Head c, Middle a, Tail b
-%%
-%% Let's try the "try 5" version of the repair scheme.
+%%     Head a, Middle c, Tail b
 
-conc_write_repair3_test() ->
-    exit(todo).
+conc_write_repair3_2to3_test() ->
+    Val_a = <<"A version">>,
+    Val_b = <<"Version B">>,
+    Layout1 = #layout{epoch=1, upi=[a,b],   repairing=[]},
+    Layout2 = #layout{epoch=2, upi=[a,b],   repairing=[c]},
+    Layout3 = #layout{epoch=3, upi=[a,c,b], repairing=[]},
+    {ok, _Pid_a} = ?M:start_link(a, 1, Layout1, []),
+    {ok, _Pid_b} = ?M:start_link(b, 1, Layout1, []),
+    {ok, _Pid_c} = ?M:start_link(c, 1, Layout1, []),
+    Logs = [a, b, c],
+    {ok, Pid_layout} = layout_server:start_link(layout_server, 1, Layout1),
+
+    Parent = self(),
+    try
+        Wa_pid = spawn(fun() ->
+                              {Res, _} = log_client:write(1, Val_a, Layout1),
+                              Parent ! {done, self(), Res}
+                        end),
+        Wb_pid = spawn(fun() ->
+                              {Res, _} = log_client:write(1, Val_b, Layout1),
+                              Parent ! {done, self(), Res}
+                        end),
+        R_pid = spawn(fun() ->
+                              {Res1, _} = log_client:read(1, Layout1),
+                              {Res2, _} = log_client:read(1, Layout1),
+                              Parent ! {done, self(), {Res1,Res2}}
+                        end),
+        L_pid = spawn(fun() ->
+                              ok = layout_server:write(layout_server,2,Layout2),
+                              [ok = ?M:set_layout(Log, 2, Layout2) ||
+                                  Log <- Logs],
+
+                              %% HACK: hard-code read-repair for this case
+                              case ?M:read(b, 2, 1) of
+                                  {ok, V_repair} ->
+                                      case ?M:write(c, 2, 1, V_repair,
+                                                    magic_repair_abracadabra) of
+                                          ok      -> ok;
+                                          written -> ok;
+                                          starved -> exit(oi_todo_yo1)
+                                      end;
+                                  not_written ->
+                                      ok;
+                                  starved ->
+                                      exit(oi_todo_yo2)
+                              end,
+
+                              ok = layout_server:write(layout_server,3,Layout3),
+                              [ok = ?M:set_layout(Log, 3, Layout3) ||
+                                  Log <- Logs],
+                              Parent ! {done, self(), ok}
+                      end),
+
+        Wa_result = receive
+                       {done, Wa_pid, Res_a} ->
+                           Res_a
+                   end,
+        Wb_result = receive
+                       {done, Wb_pid, Res_b} ->
+                           Res_b
+                   end,
+        R_result = receive
+                       {done, R_pid, Res_y} ->
+                           Res_y
+                   end,
+        L_result = receive {done, L_pid, Res_z} -> Res_z end,
+
+        %% Sanity checking
+        true = write_result_is_ok(Wa_result),
+        true = write_result_is_ok(Wb_result),
+        if Wa_result == ok, Wb_result -> error(write_once_violation);
+           true                       -> ok
+        end,
+
+        ok = L_result,
+
+        %% TODO: simply by collapsing not_written & starved to same thing.
+        case R_result of
+            {not_written,not_written} -> ok;
+            {starved,    not_written} -> ok;
+            {not_written,starved}     -> ok;
+            {not_written,{ok,_}}      -> ok;
+            {{ok,Same},  {ok,Same}}   -> ok;
+            {starved,    {ok,_}}      -> ok;
+            {{ok,_},     starved}     -> ok;
+            {starved,    starved}     -> ok
+        end,
+
+        Idxs = [1],
+        [begin
+             R_res = [log_server:read(Log, 3, Idx) || Log <- Layout3#layout.upi],
+             case R_res of
+                 [not_written,not_written,not_written] -> ok;
+                 [{ok, U_val},not_written,not_written] -> ok;
+                 [{ok, U_val},{ok, U_val},not_written] -> ok;
+                 [{ok, U_val},{ok, U_val},{ok, U_val}] ->
+                     if Wa_result == ok orelse Wb_result == ok ->
+                             ok;
+                        true ->
+                             exit(bad_client)
+                     end
+             end
+         end || Idx <- Idxs],
+
+        ok
+    after
+        [catch ?M:stop(P) || P <- Logs],
+        catch layout_server:stop(Pid_layout),
+        ok
+    end,
+    ok.
+
+write_result_is_ok(Result) ->
+    W_expected = [ok, written, starved],    % any # of these is ok
+    lists:member(Result, W_expected).
 
 -endif. % TEST
