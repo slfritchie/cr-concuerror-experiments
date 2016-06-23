@@ -54,8 +54,8 @@ write_clobber(Name, Epoch, Idx, Val) ->
 write_during_repair(Name, Epoch, Idx, Val) ->
     write(Name, Epoch, Idx, Val, false, true).
 
-write(Name, Epoch, Idx, Val, Repair_p, HeadRepair_p) ->
-    gen_server:call(Name, {write, Epoch, Idx, Val, Repair_p, HeadRepair_p}, infinity).
+write(Name, Epoch, Idx, Val, Repair_p, HdRepSpecial_p) ->
+    gen_server:call(Name, {write, Epoch, Idx, Val, Repair_p, HdRepSpecial_p}, infinity).
 
 read(Name, Epoch, Idx) when is_integer(Epoch), is_integer(Idx) ->
     read(Name, Epoch, Idx, false).
@@ -63,8 +63,8 @@ read(Name, Epoch, Idx) when is_integer(Epoch), is_integer(Idx) ->
 read_during_repair(Name, Epoch, Idx) when is_integer(Epoch), is_integer(Idx) ->
     read(Name, Epoch, Idx, true).
 
-read(Name, Epoch, Idx, Repair_p)  when is_integer(Epoch), is_integer(Idx) ->
-    gen_server:call(Name, {read, Epoch, Idx, Repair_p}, infinity).
+read(Name, Epoch, Idx, HdRepSpecial_p)  when is_integer(Epoch), is_integer(Idx) ->
+    gen_server:call(Name, {read, Epoch, Idx, HdRepSpecial_p}, infinity).
 
 %%%%%%%%%%%%%%%%%%%%%%
 
@@ -72,16 +72,22 @@ init([Name, InitialEpoch, InitialLayout, InitialStore]) ->
     {ok, #state{name=Name,
                 epoch=InitialEpoch,
                 layout=InitialLayout,
-                store=orddict:from_list(InitialStore)}}.
+                store=orddict:from_list(InitialStore),
+                h_store=orddict:new()}}.
 
 handle_call(get_layout, _From,
             #state{epoch=Epoch, layout=Layout} = S) ->
     {reply, {ok, Epoch, Layout}, S};
 
 handle_call({set_layout, NewEpoch, NewLayout}, _From,
-            #state{epoch=Epoch} = S) ->
+            #state{name=Name, epoch=Epoch} = S) ->
+    #layout{upi=UPI, repairing=Repairing} = NewLayout,
     if NewEpoch > Epoch ->
-            {reply, ok, S#state{epoch=NewEpoch, layout=NewLayout}};
+            AmSplit_p = UPI /= [] andalso Name == hd(UPI) andalso
+                        Name == lists:last(UPI) andalso
+                        Repairing /= [],
+            {reply, ok, S#state{epoch=NewEpoch, layout=NewLayout,
+                                am_split=AmSplit_p, h_store=orddict:new()}};
        true ->
             {reply, {bad_epoch, Epoch}, S}
     end;
@@ -98,29 +104,68 @@ handle_call({write, Epoch, _Idx, _Val, _Rep, _HdRep}, _From,
             #state{epoch=MyEpoch, layout=Layout} = S)
   when Epoch > MyEpoch orelse Layout == undefined ->
     {reply, wedged, S#state{layout=undefined}};
-handle_call({write, _Epoch, Idx, Val, Repair_p, _HeadRepair_p}, _From,
-            #state{store=D} = S) ->
-    case {orddict:is_key(Idx, D), Repair_p} of
-        {true, false} ->
-            {reply, written, S};
-        _ ->
-            {reply, ok, S#state{store=orddict:store(Idx, Val, D)}}
+handle_call({write, _Epoch, Idx, Val, Repair_p, HdRepSpecial_p}=QQ, _From,
+            #state{am_split=AmSplit_p, store=D, h_store=HD} = S) ->
+    %% TODO: This logic is icky.  But the unit test split_role_test() works.
+    %%       ^_^
+    if HdRepSpecial_p == false ->
+            HeadRepairHeadRole_and_HeadRoleHasKey =
+                AmSplit_p andalso orddict:is_key(Idx, HD),
+            case {orddict:is_key(Idx, D), Repair_p, HeadRepairHeadRole_and_HeadRoleHasKey} of
+                {true, false, false} ->
+                    {reply, written, S};
+                _ ->
+                    case orddict:find(Idx, HD) of
+                        {ok, OtherVal} when OtherVal /= Val ->
+                            {reply, bad_value, S};
+                        _ ->
+                            D2 = orddict:store(Idx, Val, D),
+                            HD2 = orddict:erase(Idx, HD),
+                            {reply, ok, S#state{store=D2, h_store=HD2}}
+                    end
+            end;
+       true ->
+            %% Sanity! HdRepSpecial_p=true is only valid when sent to the head,
+            %% but Repair_p repair clobber should only ever be sent to middle.
+            Repair_p = false,
+            case {orddict:find(Idx, HD), orddict:is_key(Idx, D)} of
+                {{ok,_},  _} ->
+                    %% Written during this repair period
+                    {reply, written, S};
+                {error, true} ->
+                    %% Written before this repair period started
+                    {reply, written, S};
+                {error, false} ->
+                    D2 = orddict:store(Idx, Val, D),
+                    HD2 = orddict:store(Idx, Val, HD),
+                    {reply, ok, S#state{store=D2, h_store=HD2}}
+            end
     end;
 
-handle_call({read, Epoch, _Idx, _Repair_p}, _From, #state{epoch=MyEpoch} = S)
+handle_call({read, Epoch, _Idx, _HdRepSpecial_p}, _From,
+            #state{epoch=MyEpoch}=S)
   when Epoch < MyEpoch ->
     {reply, {bad_epoch, MyEpoch}, S};
 
-handle_call({read, Epoch, _Idx, _Repair_p}, _From, #state{epoch=MyEpoch,
-                                                          layout=Layout} = S)
+handle_call({read, Epoch, _Idx, _HdRepSpecial_p}, _From,
+            #state{epoch=MyEpoch, layout=Layout}=S)
   when Epoch > MyEpoch orelse Layout == undefined ->
     {reply, wedged, S#state{layout=undefined}};
-handle_call({read, _Epoch, Idx, _Repair_p}, _From, #state{store=D} = S) ->
+handle_call({read, _Epoch, Idx, HdRepSpecial_p}, _From,
+            #state{store=D,h_store=HD} = S) ->
     case orddict:find(Idx, D) of
         error ->
             {reply, not_written, S};
         {ok, Val} ->
-            {reply, {ok, Val}, S}
+            case {HdRepSpecial_p, orddict:is_key(Idx, HD)} of
+                {false, true} ->
+                    %% HdRepSpecial_p=false means we are in a tail role.
+                    %% Idx was written during split role repair time and
+                    %% has not yet been written to the tail.
+                    {reply, not_written, S};
+                _ ->
+                    {reply, {ok, Val}, S}
+            end
     end.
 
 %%%%%%%%%%%%%%%%%%%%%%

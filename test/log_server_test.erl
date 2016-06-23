@@ -67,25 +67,29 @@ log_smoke_test() ->
     ok.
 
 split_role_test() ->
-    Layout1 = #layout{epoch=1, upi=[a], repairing=[]},
-    Layout2 = #layout{epoch=1, upi=[a], repairing=[b]},
-    Val1 = <<"First!">>,
-    {ok, PidA} = ?M:start_link(a, 1, Layout1, []),
-    {ok, PidB} = ?M:start_link(b, 1, Layout1, []),
+    Layout1 = #layout{epoch=1, upi=[a], repairing=[b]},
+    Val1 = <<"First">>,
+    Val2 = <<"Invalid, not equal to Val1">>,
+    {ok, PidA} = ?M:start_link(a, 0, Layout1, []),
+    ok = ?M:set_layout(a, 1, Layout1),
+    %% {ok, PidB} = ?M:start_link(b, 1, Layout1, []),
 
     try
         not_written = ?M:read(a, 1, 1),
-        ok = ?M:write_during_repair(a, 1, 1, Val1),
+        ok          = ?M:write_during_repair(a, 1, 1, Val1),
+        written     = ?M:write_during_repair(a, 1, 1, Val1),
+
         {ok, Val1}  = ?M:read_during_repair(a, 1, 1),
         not_written = ?M:read(              a, 1, 1),
 
-        written = ?M:write_during_repair(a, 1, 1, Val1),
         ok      = ?M:write(              a, 1, 1, Val1),
         written = ?M:write(              a, 1, 1, Val1),
 
-        ok
+        ok        = ?M:write_during_repair(a, 1, 2, Val1),
+        bad_value = ?M:write(              a, 1, 2, Val2)
     after
-        [catch ?M:stop(P) || P <- [PidA, PidB]]
+        [catch ?M:stop(P) || P <- [PidA]]
+        %% [catch ?M:stop(P) || P <- [PidA, PidB]]
     end.
 
 client_smoke_test() ->
@@ -160,8 +164,8 @@ conc_write1_test() ->
         %% servers at all indexes.  For each index, the result of
         %% {ok,V} or not_written must all be equal.
         %%
-        Idxs = lists:usort([Idx || {_Log, Idx, _Val} <- Writes]),
         %% %% TODO: broken by chain repair @ length=1
+        %% Idxs = lists:usort([Idx || {_Log, Idx, _Val} <- Writes]),
         %% [{ok, _LO} = log_client:read_repair(Idx, Layout2) || Idx <- Idxs],
         %% [begin
         %%      R_res = [log_server:read(Log, 2, Idx) || Log <- Logs],
@@ -285,7 +289,7 @@ conc_write_repair3_2to3_test() ->
              R_res = [log_server:read(Log, 3, Idx) || Log <- Layout3#layout.upi],
              case R_res of
                  [not_written,not_written,not_written] -> ok;
-                 [{ok, U_val},not_written,not_written] -> ok;
+                 [{ok,_U_val},not_written,not_written] -> ok;
                  [{ok, U_val},{ok, U_val},not_written] -> ok;
                  [{ok, U_val},{ok, U_val},{ok, U_val}] ->
                      if Wa_result == ok orelse Wb_result == ok ->
