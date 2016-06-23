@@ -311,12 +311,7 @@ conc_write_repair3_2to3_test() ->
                  [not_written,not_written,not_written] -> ok;
                  [{ok,_U_val},not_written,not_written] -> ok;
                  [{ok, U_val},{ok, U_val},not_written] -> ok;
-                 [{ok, U_val},{ok, U_val},{ok, U_val}] ->
-                     if Wa_result == ok orelse Wb_result == ok ->
-                             ok;
-                        true ->
-                             exit(bad_client)
-                     end
+                 [{ok, U_val},{ok, U_val},{ok, U_val}] -> ok
              end
          end || Idx <- Idxs],
 
@@ -432,12 +427,7 @@ conc_write_repair3_1to2_test() ->
              case R_res of
                  [not_written,not_written] -> ok;
                  [{ok,_U_val},not_written] -> ok;
-                 [{ok, U_val},{ok, U_val}] ->
-                     if Wa_result == ok orelse Wb_result == ok ->
-                             ok;
-                        true ->
-                             exit(bad_client)
-                     end
+                 [{ok, U_val},{ok, U_val}] -> ok
              end
          end || Idx <- Idxs],
 
