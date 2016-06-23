@@ -90,7 +90,15 @@ write(Idx, Val, [{Log, HdRepSpecial_p}|Rest], Done, MaxLayouts, Repair_p,
                     ?LOG(written),
                     {written, Layout};
                true ->
-                    case log_server:read(Log, Epoch, Idx) of
+                    R = if hd(UPI) == Log, Repairing /= [] ->
+                                fun() -> log_server:read_during_repair(
+                                           Log, Epoch, Idx)
+                                end;
+                           true ->
+                                fun() -> log_server:read(Log, Epoch, Idx)
+                                end
+                        end,
+                    case R() of
                         {ok, WrittenVal} when WrittenVal == Val ->
                             ?LOG(same),
                             write(Idx, Val, Rest, [Log|Done],
