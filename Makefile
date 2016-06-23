@@ -36,3 +36,6 @@ conc_write_repair2_test: compile-test
 conc_write_repair3_2to3_test: compile-test
 	$(CONCUERROR) --pz .eunit -m log_server_test -t $@ $(CONC_OPTS)
 
+conc_write_repair3_1to2_test: compile-test
+	$(CONCUERROR) --pz .eunit -m log_server_test -t $@ $(CONC_OPTS)
+

@@ -71,10 +71,13 @@ split_role_test() ->
     Val1 = <<"First">>,
     Val2 = <<"Invalid, not equal to Val1">>,
     {ok, PidA} = ?M:start_link(a, 0, Layout1, []),
-    ok = ?M:set_layout(a, 1, Layout1),
-    %% {ok, PidB} = ?M:start_link(b, 1, Layout1, []),
+    {ok, PidB} = ?M:start_link(b, 0, Layout1, []),
+    Logs = [a, b],
+    [ok = ?M:set_layout(L, 1, Layout1) || L <- Logs],
 
     try
+        %% Single log unit testing
+
         not_written = ?M:read(a, 1, 1),
         ok          = ?M:write_during_repair(a, 1, 1, Val1),
         written     = ?M:write_during_repair(a, 1, 1, Val1),
@@ -86,10 +89,27 @@ split_role_test() ->
         written = ?M:write(              a, 1, 1, Val1),
 
         ok        = ?M:write_during_repair(a, 1, 2, Val1),
-        bad_value = ?M:write(              a, 1, 2, Val2)
+        bad_value = ?M:write(              a, 1, 2, Val2),
+
+        %% Using either read function, value should exist
+        {ok, Val1}  = ?M:read_during_repair(a, 1, 1),
+        {ok, Val1}  = ?M:read(a, 1, 1),
+
+        %% Let's try a chain.  Does log_client:write() do the right thing?
+
+        Layout4 = #layout{epoch=4, upi=[a], repairing=[b]},
+        [ok = log_server:set_layout(L, 4, Layout4) || L <- Logs],
+
+        Val4 = <<"Val written during repair, clobbers earlier partial write">>,
+        ok = ?M:write(b, 4, 10, <<"partial write value">>),
+
+        {ok,_} = log_client:write(10, Val4, Layout4),
+        [{L, {ok, Val4}} = {L, ?M:read(L, 4, 10)} || L <- [a,b] ],
+        {ok, Val4} = ?M:read_during_repair(a, 4, 10),
+
+        ok
     after
-        [catch ?M:stop(P) || P <- [PidA]]
-        %% [catch ?M:stop(P) || P <- [PidA, PidB]]
+        [catch ?M:stop(P) || P <- [PidA, PidB]]
     end.
 
 client_smoke_test() ->
@@ -292,6 +312,127 @@ conc_write_repair3_2to3_test() ->
                  [{ok,_U_val},not_written,not_written] -> ok;
                  [{ok, U_val},{ok, U_val},not_written] -> ok;
                  [{ok, U_val},{ok, U_val},{ok, U_val}] ->
+                     if Wa_result == ok orelse Wb_result == ok ->
+                             ok;
+                        true ->
+                             exit(bad_client)
+                     end
+             end
+         end || Idx <- Idxs],
+
+        ok
+    after
+        [catch ?M:stop(P) || P <- Logs],
+        catch layout_server:stop(Pid_layout),
+        ok
+    end,
+    ok.
+
+%% Chain starts at length 1:
+%%
+%%    Head a = unwritten
+%%
+%% Next chain config:
+%%
+%%     Head a (special head role), Middle/repairing b, Tail a
+%%
+%% Final chain config:
+%%
+%%     Head a, Tail b
+
+conc_write_repair3_1to2_test() ->
+    Val_a = <<"A version">>,
+    Val_b = <<"Version B">>,
+    Layout1 = #layout{epoch=1, upi=[a],   repairing=[]},
+    Layout2 = #layout{epoch=2, upi=[a],   repairing=[b]},
+    Layout3 = #layout{epoch=3, upi=[a,b], repairing=[]},
+    {ok, _Pid_a} = ?M:start_link(a, 1, Layout1, []),
+    {ok, _Pid_b} = ?M:start_link(b, 1, Layout1, []),
+    Logs = [a, b],
+    {ok, Pid_layout} = layout_server:start_link(layout_server, 1, Layout1),
+
+    Parent = self(),
+    try
+        Wa_pid = spawn(fun() ->
+                              {Res, _} = log_client:write(1, Val_a, Layout1),
+                              Parent ! {done, self(), Res}
+                        end),
+        Wb_pid = spawn(fun() ->
+                              {Res, _} = log_client:write(1, Val_b, Layout1),
+                              Parent ! {done, self(), Res}
+                        end),
+        R_pid = spawn(fun() ->
+                              {Res1, _} = log_client:read(1, Layout1),
+                              {Res2, _} = log_client:read(1, Layout1),
+                              Parent ! {done, self(), {Res1,Res2}}
+                        end),
+        L_pid = spawn(fun() ->
+                              ok = layout_server:write(layout_server,2,Layout2),
+                              [ok = ?M:set_layout(Log, 2, Layout2) ||
+                                  Log <- Logs],
+
+                              %% HACK: hard-code read-repair for this case
+                              case ?M:read(a, 2, 1) of
+                                  {ok, V_repair} ->
+                                      case ?M:write_clobber(b, 2, 1, V_repair) of
+                                          ok      -> ok;
+                                          written -> ok;
+                                          starved -> exit(oi_todo_yo1)
+                                      end;
+                                  not_written ->
+                                      ok;
+                                  starved ->
+                                      exit(oi_todo_yo2)
+                              end,
+
+                              ok = layout_server:write(layout_server,3,Layout3),
+                              [ok = ?M:set_layout(Log, 3, Layout3) ||
+                                  Log <- Logs],
+                              Parent ! {done, self(), ok}
+                      end),
+
+        Wa_result = receive
+                       {done, Wa_pid, Res_a} ->
+                           Res_a
+                   end,
+        Wb_result = receive
+                       {done, Wb_pid, Res_b} ->
+                           Res_b
+                   end,
+        R_result = receive
+                       {done, R_pid, Res_y} ->
+                           Res_y
+                   end,
+        L_result = receive {done, L_pid, Res_z} -> Res_z end,
+
+        %% Sanity checking
+        true = write_result_is_ok(Wa_result),
+        true = write_result_is_ok(Wb_result),
+        if Wa_result == ok, Wb_result == ok -> error(write_once_violation);
+           true                             -> ok
+        end,
+
+        ok = L_result,
+
+        %% TODO: simply by collapsing not_written & starved to same thing.
+        case R_result of
+            {not_written,not_written} -> ok;
+            {starved,    not_written} -> ok;
+            {not_written,starved}     -> ok;
+            {not_written,{ok,_}}      -> ok;
+            {{ok,Same},  {ok,Same}}   -> ok;
+            {starved,    {ok,_}}      -> ok;
+            {{ok,_},     starved}     -> ok;
+            {starved,    starved}     -> ok
+        end,
+
+        Idxs = [1],
+        [begin
+             R_res = [log_server:read(Log, 3, Idx) || Log <- Layout3#layout.upi],
+             case R_res of
+                 [not_written,not_written] -> ok;
+                 [{ok,_U_val},not_written] -> ok;
+                 [{ok, U_val},{ok, U_val}] ->
                      if Wa_result == ok orelse Wb_result == ok ->
                              ok;
                         true ->

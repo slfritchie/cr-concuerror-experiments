@@ -36,6 +36,8 @@ make_write_order(#layout{upi=UPI, repairing=[]}) ->
     [{L, false} || L <- UPI];
 make_write_order(#layout{upi=[_], repairing=[]}) ->
     exit(todo_future_work);
+make_write_order(#layout{upi=[Solo], repairing=Repairing}) ->
+    [{Solo, true}] ++ [{L, false} || L <- Repairing] ++ [{Solo, false}];
 make_write_order(#layout{upi=UPI, repairing=Repairing}) ->
     Tail = lists:last(UPI),
     Prefix = UPI -- [Tail],
@@ -58,19 +60,24 @@ write(_Idx, _Val, _L, _Done, 0 = _MaxLayouts, _Repair_p, Layout) ->
     %% for sanity in some other way.
     ?LOG(starved),
     {starved, Layout};
-write(Idx, Val, [{Log, _TODO}|Rest], Done, MaxLayouts, Repair_p,
-      #layout{epoch=Epoch, repairing=Repairing} = Layout) ->
+write(Idx, Val, [{Log, HdRepSpecial_p}|Rest], Done, MaxLayouts, Repair_p,
+      #layout{epoch=Epoch, upi=UPI, repairing=Repairing} = Layout) ->
     %% TODO: Change API for magic write to avoid verbosity here.
-    W = case lists:member(Log, Repairing) of
-            true ->
+    W = case {lists:member(Log, Repairing), HdRepSpecial_p} of
+            {true, _} ->
                 fun() ->
-                        ?LOG({write_repair,Layout,Val}),
+                        ?LOG({write_repair,Log,Layout,Val}),
                         log_server:write_clobber(Log, Epoch, Idx, Val)
                 end;
-           false ->
+            {false, false} ->
                 fun() ->
                         ?LOG({write,Log,Layout,Val}),
                         log_server:write(Log, Epoch, Idx, Val)
+                end;
+            {false, true} ->
+                fun() ->
+                        ?LOG({write,head_repair_special,Log,Layout,Val}),
+                        log_server:write_during_repair(Log, Epoch, Idx, Val)
                 end
         end,
     case W() of
