@@ -124,8 +124,28 @@ write(Idx, Val, [{Log, HdRepSpecial_p}|Rest], Done, MaxLayouts, Repair_p,
 
 new_layout_retry_write(Idx, Val, Done, MaxLayouts, Repair_p) ->
     {ok, _NewEpoch, NewLayout} = layout_server:read(?LAYOUT_SERVER),
+    #layout{upi=[_|_]=UPI, repairing=Repairing} = NewLayout,
     WriteLogs = make_write_order(NewLayout),
-    write(Idx, Val, WriteLogs, Done, MaxLayouts - 1, Repair_p, NewLayout).
+    WriteLogs2 = if Done /= [], length(UPI) == 1, Repairing /= [] ->
+                         %% Done is not empty, so therefore we've done at
+                         %% least the head.  However, we're in the special
+                         %% repair mode where UPI length=1.  We need to
+                         %% filter out the {Head,true}, filter out any
+                         %% other {Done,false}, and leave in {Head,false}.
+                         %% (Heh, I'm not 100% sure if {Head,false} is
+                         %%  strictly necessary.)
+                         Head = hd(UPI),
+                         Remove = [{Head,true}] ++ [{L,false} || L <- Done],
+                         WL3 = WriteLogs -- Remove,
+                         case lists:last(WL3) of
+                             {Head,false} -> WL3;
+                             _            -> WL3 ++ [{Head,false}]
+                         end;
+                    true ->
+                         [X || X={Log, _} <- WriteLogs,
+                               not lists:member(Log, Done)]
+                 end,
+    write(Idx, Val, WriteLogs2, Done, MaxLayouts - 1, Repair_p, NewLayout).
 
 %% TODO: broken by chain repair @ length=1
 %%
