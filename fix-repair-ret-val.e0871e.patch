@@ -1,0 +1,16 @@
+diff --git a/test/log_server_test.erl b/test/log_server_test.erl
+index 7b164d0..a1a835b 100644
+--- a/test/log_server_test.erl
++++ b/test/log_server_test.erl
+@@ -140,7 +140,10 @@ conc_write1_test() ->
+         %% {ok,V} or not_written must all be equal.
+         %%
+         Idxs = lists:usort([Idx || {_Log, Idx, _Val} <- Writes]),
+-        [{ok, _LO} = log_client:read_repair(Idx, Layout2) || Idx <- Idxs],
++        [case log_client:read_repair(Idx, Layout2) of
++             {ok, _LO}          -> ok;
++             {not_written, _LO} -> ok
++         end || Idx <- Idxs],
+ 
+         [begin
+              R_res = [log_server:read(Log, 2, Idx) || Log <- Logs],
