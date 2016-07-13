@@ -10,8 +10,9 @@ a patch that needs to be applied outside of commit e0871e.
 
 No errors expected.  No errors found by Concuerror, hooray.
 
+% git checkout 654356d3d36cb137ea598eef17231f5ab45e0500 ; cp fix-repair-ret-val.e0871e.patch /tmp
 % git checkout e0871e71094eeaba1d3e113760fae8ee3f642a4b
-% patch -p1 < ./fix-repair-ret-val.e0871e.patch
+% patch -p1 < /tmp/fix-repair-ret-val.e0871e.patch
 % make clean ; env CONC_OPTS="--depth_bound 250 -o concuerror_report.commit=e0871e.txt.`date +%s`" make conc_write1_test
 
 Scenario #2
