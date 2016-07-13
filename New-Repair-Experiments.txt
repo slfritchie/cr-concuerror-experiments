@@ -1,3 +1,7 @@
+To execute all scenarios in this file:
+
+    egrep '^%' New-Repair-Experiments.txt | sed -e 's/^% //' -e 's/concuerror_report/REPORT/' > /tmp/foo
+    sh -c 'sh -x /tmp/foo 2>&1 | tee /tmp/foo.out'
 
 Scenario #1
 
