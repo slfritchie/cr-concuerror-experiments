@@ -37,7 +37,7 @@ Here's a short-cut to scrape all of the scenario example command
 snippets into a single file and then execute it.  My MacBook Pro
 requires about two hours to run all scenarios.
 
-    % egrep '^    %' README.md | sed -e 's/^    % //' | sed 1,2d > /tmp/foo
+    % egrep '^    %' README.md | sed -e 's/^    % //' | sed 1,4d > /tmp/foo
     % sh -c 'sh -x /tmp/foo 2>&1 | tee /tmp/foo.out'
 
 # Scenario #1
