@@ -1,14 +1,8 @@
 
 -module(layout_server).
 
--behaviour(gen_server).
-
 %% API
 -export([start_link/3, read/1, write/3, stop/1]).
-
-%% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
 
 -record(state, {
           name   :: atom(),
@@ -17,48 +11,57 @@
          }).
 
 start_link(Name, InitialEpoch, InitialLayout) when InitialEpoch >= 0 ->
-    gen_server:start_link({local, Name},
-                          ?MODULE, [Name, InitialEpoch, InitialLayout], []).
+    Pid = spawn_link(fun() ->
+                             server_loop(Name, InitialEpoch, InitialLayout)
+                     end),
+    {ok, Pid}.
 
 read(Name) ->
-    gen_server:call(Name, read, infinity).
+    g_call(Name, read, infinity).
 
 write(Name, Epoch, Layout) ->
-    gen_server:call(Name, {write, Epoch, Layout}, infinity).
+    g_call(Name, {write, Epoch, Layout}, infinity).
 
 stop(Name) ->
-    gen_server:call(Name, stop, infinity).
+    g_call(Name, stop, 100).
 
 %%%%%%%%%%%%%%%%%%%%%%
 
-init([Name, InitialEpoch, InitialLayout]) ->
-    {ok, #state{name=Name,
-                epoch=InitialEpoch,
-                layout=InitialLayout}}.
+g_call(Pid, Term, Timeout) ->
+    Ref = make_ref(),
+    Pid ! {g_call, Ref, Term, self()},
+    receive
+        {g_reply, Ref, Reply} ->
+            Reply
+    after Timeout ->
+            exit(timeout)
+    end.
 
-handle_call(read, _From,
-            #state{epoch=Epoch, layout=Layout} = S) ->
-    {reply, {ok, Epoch, Layout}, S};
-handle_call({write, NewEpoch, NewLayout}, _From,
-            #state{epoch=Epoch} = S) ->
-    if is_integer(NewEpoch), NewEpoch > Epoch ->
-            {reply, ok, S#state{epoch=NewEpoch, layout=NewLayout}};
-       true ->
-            {reply, bad_epoch, S}
-    end;
-handle_call(stop, _From, S) ->
-    {stop, normal, ok, S}.
+g_reply(Pid, Ref, Reply) ->
+    Pid ! {g_reply, Ref, Reply}.
 
-handle_cast(_Msg, S) ->
-    {noreply, S}.
+server_loop(Name, InitialEpoch, InitialLayout) ->
+    server_loop(
+      #state{name=Name,
+             epoch=InitialEpoch,
+             layout=InitialLayout}).
 
-handle_info(_Info, S) ->
-    {noreply, S}.
-
-terminate(_Reason, _S) ->
-    ok.
-
-code_change(_OldVsn, S, _Extra) ->
-    {ok, S}.
-
-%%%%%%%%%%%%%%%%%%%%%%
+server_loop(S) ->
+    receive
+        {g_call, Ref, read, From} ->
+            #state{epoch=Epoch, layout=Layout} = S,
+            g_reply(From, Ref, {ok, Epoch, Layout}),
+            server_loop(S);
+        {g_call, Ref, {write, NewEpoch, NewLayout}, From} ->
+            #state{epoch=Epoch} = S,
+            if is_integer(NewEpoch), NewEpoch > Epoch ->
+                    g_reply(From, Ref, ok),
+                    server_loop(S#state{epoch=NewEpoch, layout=NewLayout});
+               true ->
+                    g_reply(From, Ref, bad_epoch),
+                    server_loop(S)
+            end;
+        {g_call, Ref, stop, From} ->
+            g_reply(From, Ref, ok),
+            exit(normal)
+    end.

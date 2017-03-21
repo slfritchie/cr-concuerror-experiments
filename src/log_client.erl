@@ -6,7 +6,7 @@
          write/3]).
 -include("layout.hrl").
 
--define(LAYOUT_SERVER, layout_server). % Naming convention clarity.
+-define(LAYOUT_SERVER, get(layout_server)). % Naming convention clarity.
 -define(MAX_LAYOUTS, 4).               % Max # of layout churn loops
 
 -define(LOG(X), put(foo, [{X,?LINE}|get(foo)])).

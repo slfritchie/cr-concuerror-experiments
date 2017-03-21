@@ -121,6 +121,7 @@ client_smoke_test() ->
     {ok, Pid_layout} = layout_server:start_link(layout_server, 2, Layout2),
 
     try
+        put(layout_server, Pid_layout),
         {{ok, Val1}, LayoutB}  = log_client:read(1, Layout1),
 
         {{ok, Val1}, LayoutC}  = log_client:read(1, LayoutB),
@@ -151,7 +152,8 @@ conc_write1_test() ->
     Val_b = <<"Version B">>,
     Parent = self(),
     F = fun(Name, Idx, Val) ->
-                register(Name, self()),
+                %% register(Name, self()),
+                put(layout_server, Pid_layout),
                 {Res, _Layout2} = log_client:write(Idx, Val, Layout1),
                 Parent ! {done, self(), Res}
         end,
@@ -162,7 +164,7 @@ conc_write1_test() ->
                                 F(Name, Idx, Val)
                         end) || {Name, Idx, Val} <- Writes ],
         L_pid = spawn(fun() ->
-                              ok = layout_server:write(layout_server,2,Layout2),
+                              ok = layout_server:write(Pid_layout,2,Layout2),
                               [ok = ?M:set_layout(Log, 2, Layout2) ||
                                   Log <- Logs],
                               Parent ! {done, self(), ok}
@@ -232,20 +234,24 @@ conc_write_repair3_2to3_test() ->
     Parent = self(),
     try
         Wa_pid = spawn(fun() ->
+                               put(layout_server, Pid_layout),
                               {Res, _} = log_client:write(1, Val_a, Layout1),
                               Parent ! {done, self(), Res}
                         end),
         Wb_pid = spawn(fun() ->
+                               put(layout_server, Pid_layout),
                               {Res, _} = log_client:write(1, Val_b, Layout1),
                               Parent ! {done, self(), Res}
                         end),
         R_pid = spawn(fun() ->
+                              put(layout_server, Pid_layout),
                               {Res1, _} = log_client:read(1, Layout1),
                               {Res2, _} = log_client:read(1, Layout1),
                               Parent ! {done, self(), {Res1,Res2}}
                         end),
         L_pid = spawn(fun() ->
-                              ok = layout_server:write(layout_server,2,Layout2),
+                              put(layout_server, Pid_layout),
+                              ok = layout_server:write(Pid_layout,2,Layout2),
                               [ok = ?M:set_layout(Log, 2, Layout2) ||
                                   Log <- Logs],
 
@@ -263,7 +269,7 @@ conc_write_repair3_2to3_test() ->
                                       exit(oi_todo_yo2)
                               end,
 
-                              ok = layout_server:write(layout_server,3,Layout3),
+                              ok = layout_server:write(Pid_layout,3,Layout3),
                               [ok = ?M:set_layout(Log, 3, Layout3) ||
                                   Log <- Logs],
                               Parent ! {done, self(), ok}
@@ -349,20 +355,24 @@ conc_write_repair3_1to2_test() ->
     Parent = self(),
     try
         Wa_pid = spawn(fun() ->
+                              put(layout_server, Pid_layout),
                               {Res, _} = log_client:write(1, Val_a, Layout1),
                               Parent ! {done, self(), Res}
                         end),
         Wb_pid = spawn(fun() ->
+                              put(layout_server, Pid_layout),
                               {Res, _} = log_client:write(1, Val_b, Layout1),
                               Parent ! {done, self(), Res}
                         end),
         R_pid = spawn(fun() ->
+                              put(layout_server, Pid_layout),
                               {Res1, _} = log_client:read(1, Layout1),
                               {Res2, _} = log_client:read(1, Layout1),
                               Parent ! {done, self(), {Res1,Res2}}
                         end),
         L_pid = spawn(fun() ->
-                              ok = layout_server:write(layout_server,2,Layout2),
+                              put(layout_server, Pid_layout),
+                              ok = layout_server:write(Pid_layout,2,Layout2),
                               [ok = ?M:set_layout(Log, 2, Layout2) ||
                                   Log <- Logs],
 
@@ -380,7 +390,7 @@ conc_write_repair3_1to2_test() ->
                                       exit(oi_todo_yo2)
                               end,
 
-                              ok = layout_server:write(layout_server,3,Layout3),
+                              ok = layout_server:write(Pid_layout,3,Layout3),
                               [ok = ?M:set_layout(Log, 3, Layout3) ||
                                   Log <- Logs],
                               Parent ! {done, self(), ok}

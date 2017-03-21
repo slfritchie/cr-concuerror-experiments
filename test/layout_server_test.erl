@@ -12,18 +12,18 @@ smoke_test() ->
     {ok, Pid} = ?M:start_link(SUT, 1, foo),
 
     try
-        {ok, 1, foo} = ?M:read(SUT),
+        {ok, 1, foo} = ?M:read(Pid),
 
-        ok = ?M:write(SUT, 2, bar),
-        {ok, 2, bar} = ?M:read(SUT),
+        ok = ?M:write(Pid, 2, bar),
+        {ok, 2, bar} = ?M:read(Pid),
 
-        bad_epoch = ?M:write(SUT, 2, bar),
-        bad_epoch = ?M:write(SUT, 2, yo_dawg),
-        bad_epoch = ?M:write(SUT, 1, bar),
+        bad_epoch = ?M:write(Pid, 2, bar),
+        bad_epoch = ?M:write(Pid, 2, yo_dawg),
+        bad_epoch = ?M:write(Pid, 1, bar),
 
-        ok = ?M:stop(SUT),
+        ok = ?M:stop(Pid),
         try
-            ?M:stop(SUT),
+            ?M:stop(Pid),
             exit(should_have_failed)
         catch
             _:_ ->
