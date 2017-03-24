@@ -137,6 +137,65 @@ client_smoke_test() ->
     end,
     ok.
 
+%% Concuerror test case "no repair".  The types of processes involved are:
+%%
+%%   a). The log_server processes, Pid_a and Pid_b, representing server
+%%   a and b, respectively.  They are basic key-value (KV) stores, plus
+%%   an additional property that each key is writable only once (i.e., a
+%%   write-once register).  These servers are our cluster, with a single
+%%   chain configuration for Chain Replication.
+%%
+%%   b). The layout_server process, which stores the Chain Replication
+%%   configuration for our two node cluster.  In the event that a client
+%%   discovers that the cluster configuration is changing, the client
+%%   will query the layout_server for the updated cluster config.
+%%
+%%   c). Two client process, client_1 and client_2, whose PIDs are
+%%   stored in the W_pids list.  Each process will try to write a single
+%%   value to the cluster using the same key, 1, but will store
+%%   different values.  Because the log_server KV stores are write-once,
+%%   we expect that exactly one client will succeed writing to key=1.
+%%
+%%   d). The layout-changing process, L_pid.  The cluster is started
+%%   with an initial configuration layout of epoch=1 and a Chain
+%%   Replication chain of a single server, [a].  L_pid changes the
+%%   cluster configuration by first writing a layout with epoch=2, the
+%%   (UPI) chain=[a,b] to the layout server and then to each of the
+%%   log_server KV stores.
+%%
+%% While a client process attempts to write to key=1, the cluster layout
+%% may or may not change, depending on race timing.  Both clients start
+%% using the epoch=1 layout where the chain is only [a].  If the faster
+%% client is successful writing to server 'a' before the layout change
+%% is finished, then server 'b' will remain unwritten: the cluster
+%% config change is slower than the fast client.
+%%
+%% However, if a client is slow, and the cluster config change is in
+%% progress, a server return {bad_epoch,CurrentEpoch} to the client.
+%% This may happen any time after the server has processed the
+%% set_layout() call, which tells the server to ignore epoch 1 and only
+%% provide service to client requests that contain epoch=2.
+%%
+%% When a client receives {bad_epoch,...}, the client must query the
+%% layout_server to get the new cluster config.  The client may then
+%% resume its write protocol by resending the write op to the
+%% appropriate server and appropriate epoch number.  If a client needs
+%% to retry after more than 4 layout changes, it may abort and return
+%% 'starved'.  (See the ?MAX_LAYOUTS macro use in log_client.erl.)
+%%
+%% The faster client should return 'ok'.  The slower client should
+%% return 'written', because the faster client won the race to write to
+%% the head of the chain.  (We use a trick of Erlang pattern matching
+%% and list removal with the '--' operator to detect & crash when
+%% clients report two 'ok' or two 'written' responses.)
+%%
+%% NOTE: The layout that we use for this test is *not* correct for
+%%       testing any of the repair techniques that we wish to test.
+%%       Specifically, the 'repairing' record field is unused.  Here, we
+%%       aren't attempting any real repair.  We will use 'repairing'
+%%       field in later tests which try to verify actual repair
+%%       algorithms.
+%%
 %% /usr/local/src/Concuerror/concuerror --pz ./.eunit -m log_server_test -t conc_write1_test
 
 conc_write1_test() ->
@@ -204,18 +263,47 @@ conc_write1_test() ->
     end,
     ok.
 
-%% OK, let's set this up using the scenario that I'd put on the
-%% whiteboard earlier this week.  Chain starts at length 2:
+%% Concuerror test case "2 to 3".  The types of processes involved are:
 %%
-%%    Head a = unwritten, Tail b = unwritten
+%%   a). The log_server processes, Pid_a, Pid_b, and Pid_c.
 %%
-%% Next chain config:
+%%   b). The layout_server process.
+%%
+%%   c). Two writer client processes, Wa_pid and Wb_pid.  Both are
+%%       attempting to write to key=1 but are using different values.
+%%       Both clients start using the epoch=1 layout but will detect and
+%%       switch to new layouts if they are slow enough to get caught in
+%%       the middle of cluster change.
+%%
+%%   d). A reader client process, R_pid, which attempts to read key=1
+%%       from the cluster twice in a row.  Like the writers, the reader
+%%       starts with epoch=1 layout but may switch new layouts if it is
+%%       too slow.
+%%
+%%   e). The layout-changing process, L_pid.  This process is simulating
+%%       both the cluster config change and also sync'ing/repairing data
+%%       on the server that is being added to the chain.
+%%
+%%           1). Change layout to epoch=2, UPI chain=[a,b], repairing=[c].
+%%           2). Read the value of key=1 directly from server 'b' and
+%%           write that value (if it was written) directly to server 'c'.
+%%           3). Change layout to epoch=3, UPI chain=[a,c,b], repairing=[].
+%%
+%% Layout epoch=1 summary:
+%%
+%%    Head a, Tail b.
+%%    Key=1 is unwritten on both a & b.
+%%
+%% Layout epoch=2 summary:
 %%
 %%     Head a, Middle/repairing c, Tail b
+%%     Key=1 value may be changing
 %%
-%% Final chain config:
+%% Layout epoch=3 summary:
 %%
-%%     Head a, Middle c, Tail b
+%%     Head a, Middle c, Tail b.
+%%     Key=1 is written to some unanimous value on all servers by the end
+%%     of the test.
 
 conc_write_repair3_2to3_test() ->
     Val_a = <<"A version">>,
@@ -323,17 +411,46 @@ conc_write_repair3_2to3_test() ->
     end,
     ok.
 
-%% Chain starts at length 1:
+%% Concuerror test case "1 to 2".  The types of processes involved are:
 %%
-%%    Head a = unwritten
+%%   a). The log_server processes, Pid_a and Pid_b.
 %%
-%% Next chain config:
+%%   b). The layout_server process.
 %%
-%%     Head a (special head role), Middle/repairing b, Tail a
+%%   c). Two writer client processes, Wa_pid and Wb_pid.  Same as the
+%%       "2 to 3" test case.
 %%
-%% Final chain config:
+%%   d). A reader client process, R_pid, which attempts to read key=1
+%%       from the cluster twice in a row.  Same as the "2 to 3" test
+%%       case.
+%%
+%%   e). The layout-changing process, L_pid.  Similar to the "2 to 3"
+%%       test case but not the same.  We wish to put the repairing node
+%%       in the middle of a healthy chain.  However, our healthy chain
+%%       is only length 1.  See summary below for more detail.
+
+%%
+%% Layout epoch=1 summary:
+%%
+%%    Head a, tail a (the normal Chain Replication state for length=1)
+%%    Key=1 is unwritten on a
+%%
+%% Layout epoch=2 summary:
+%%
+%%     Head a (special head repair role), Middle/repairing b, Tail a
+%%     Key=1 value may be changing
+%%
+%% We take a novel approach: split server 'a' into two virtual servers
+%% with different roles, "head repair role" and "tail role".  The
+%% physical store of server a is split into virtual stores, so that
+%% write of key=1 to the head repair role's store does *not* affect the
+%% tail role's store.
+%%
+%% Layout epoch=3 summary:
 %%
 %%     Head a, Tail b
+%%     Key=1 is written to some unanimous value on both servers by the end
+%%     of the test.
 
 conc_write_repair3_1to2_test() ->
     Val_a = <<"A version">>,
