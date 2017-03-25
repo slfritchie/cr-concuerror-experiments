@@ -1,6 +1,6 @@
 REBAR ?= ./rebar
 EUNIT_OPTS ?=
-CONCUERROR ?= /usr/local/src/Concuerror/concuerror
+CONCUERROR ?= /usr/local/src/Concuerror/src/concuerror
 CONC_OPTS ?=
 
 .PHONY: compile-no-deps test docs xref dialyzer-run dialyzer-quick dialyzer \

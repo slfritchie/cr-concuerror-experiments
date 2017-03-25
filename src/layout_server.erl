@@ -23,7 +23,7 @@ write(Name, Epoch, Layout) ->
     g_call(Name, {write, Epoch, Layout}, infinity).
 
 stop(Name) ->
-    g_call(Name, stop, 100).
+    g_call(Name, stop, infinity).
 
 %%%%%%%%%%%%%%%%%%%%%%
 
